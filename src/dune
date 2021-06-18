@@ -1,2 +1,3 @@
 (library (name redis) (public_name redis-async)
- (libraries async bignum core core_kernel.iobuf) (preprocess (pps ppx_jane)))
+ (libraries async bignum core_kernel.core core_kernel.iobuf)
+ (preprocess (pps ppx_jane)))

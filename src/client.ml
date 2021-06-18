@@ -217,7 +217,11 @@ module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) = struct
   ;;
 
   let create ?on_disconnect ~where_to_connect () =
-    let%bind _socket, reader, writer = Tcp.connect where_to_connect in
+    let%bind.Deferred.Or_error _socket, reader, writer =
+      (* Tcp.connect will raise if the connection attempt times out, but we'd prefer to
+         return an Error. *)
+      Monitor.try_with_or_error (fun () -> Tcp.connect where_to_connect)
+    in
     let pending_response = Queue.create ()                                          in
     let t                = { pending_response; reader; writer; invalidations = [] } in
     don't_wait_for
