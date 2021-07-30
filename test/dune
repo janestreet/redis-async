@@ -1,3 +1,2 @@
-(library (name redis_test)
- (libraries async expect_test_helpers_core redis jane_username)
+(library (name redis_test) (libraries async expect_test_helpers_core redis)
  (preprocess (pps ppx_jane)))

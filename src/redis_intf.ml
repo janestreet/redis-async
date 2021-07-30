@@ -71,4 +71,21 @@ module type S = sig
     -> ?bcast:bool
     -> unit
     -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
+
+  val zadd : t -> Key.t -> ([ `Score of float ] * Value.t) list -> int Deferred.Or_error.t
+  val zrem : t -> Key.t -> Value.t                         list -> int Deferred.Or_error.t
+
+  val zrange
+    :  t
+    -> Key.t
+    -> min_index:int
+    -> max_index:int
+    -> Value.t list Deferred.Or_error.t
+
+  val zrangebylex
+    :  t
+    -> Key.t
+    -> min:Value.t Maybe_bound.t
+    -> max:Value.t Maybe_bound.t
+    -> Value.t list Deferred.Or_error.t
 end

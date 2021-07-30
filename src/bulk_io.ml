@@ -49,3 +49,13 @@ module String = struct
   include String
   include Make_stringable (String)
 end
+
+module Int = struct
+  include Int
+  include Make_stringable (Int)
+end
+
+module Float = struct
+  include Float
+  include Make_stringable (Float)
+end

@@ -103,6 +103,41 @@ let%expect_test "set commands" =
     return ())
 ;;
 
+let%expect_test "sorted set commands" =
+  with_sandbox (fun r ->
+    let key_1 = "1" in
+    let query_and_print_members key =
+      let%map members = R.zrange r key ~min_index:0 ~max_index:(-1) in
+      print_s ([%sexp_of: string list] members)
+    in
+    let%bind response =
+      R.zadd r key_1 [ `Score 0., "a"; `Score 0., "b"; `Score 0., "c"; `Score 0., "d" ]
+    in
+    [%test_eq: int] response 4;
+    let%bind () = query_and_print_members key_1 in
+    [%expect {| (a b c d) |}];
+    let%bind response =
+      R.zadd r key_1 [ `Score 0., "c"; `Score 0., "d"; `Score 0., "e"; `Score 0., "f" ]
+    in
+    [%test_eq: int] response 2;
+    let%bind () = query_and_print_members key_1 in
+    [%expect {| (a b c d e f) |}];
+    let%bind response = R.zrangebylex r key_1 ~min:(Incl "b") ~max:(Excl "e") in
+    print_s ([%sexp_of: string list] response);
+    [%expect {| (b c d) |}];
+    let%bind response = R.zrangebylex r key_1 ~min:(Excl "b") ~max:Unbounded in
+    print_s ([%sexp_of: string list] response);
+    [%expect {| (c d e f) |}];
+    let%bind response = R.zrangebylex r key_1 ~min:Unbounded ~max:(Incl "d") in
+    print_s ([%sexp_of: string list] response);
+    [%expect {| (a b c d) |}];
+    let%bind response = R.zrem r key_1 [ "a"; "b"; "d"; "g" ] in
+    [%test_eq: int] response 3;
+    let%bind () = query_and_print_members key_1 in
+    [%expect {| (c e f) |}];
+    return ())
+;;
+
 let%expect_test "Parallel" =
   with_sandbox (fun r ->
     let values = List.init 10000 ~f:(fun i -> Int.to_string i, Int.to_string i) in

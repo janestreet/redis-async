@@ -59,6 +59,41 @@ module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) : sig
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
 
+  (** Send a command built from strings followed by [Key.t], followed by an associative
+      list of interleaved [int]s and [Value.t]s to Redis and expect a Response of the
+      specified kind.*)
+  val command_key_scores_values
+    :  Key.t t
+    -> ?result_of_empty_input:'r Or_error.t
+    -> string list
+    -> Key.t
+    -> ([ `Score of float ] * Value.t) list
+    -> (module Response_intf.S with type t = 'r)
+    -> 'r Deferred.Or_error.t
+
+  (** Send a command built from strings followed by [Key.t], followed by [int]s range
+      items to Redis and expect a Response of the specified kind. *)
+  val command_key_range
+    :  Key.t t
+    -> string list
+    -> Key.t
+    -> min_index:int
+    -> max_index:int
+    -> (module Response_intf.S with type t = 'r)
+    -> 'r Deferred.Or_error.t
+
+  (** Send a command built from strings followed by [Key.t], followed by
+      [Value.t Maybe_bound.t]s range items to Redis and expect a Response
+      of the specified kind. *)
+  val command_key_lex_range
+    :  Key.t t
+    -> string list
+    -> Key.t
+    -> min:Value.t Maybe_bound.t
+    -> max:Value.t Maybe_bound.t
+    -> (module Response_intf.S with type t = 'r)
+    -> 'r Deferred.Or_error.t
+
   (** Turn on Redis client tracking and provide a pipe of invalidation messages received
       from the server. Closing the pipe turns tracking off.
 

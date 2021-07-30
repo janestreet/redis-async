@@ -78,4 +78,38 @@ module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) = struct
     in
     `Cursor i, l
   ;;
+
+  let zadd t key values =
+    command_key_scores_values
+      t
+      ~result_of_empty_input:(Ok 0)
+      [ "ZADD" ]
+      key
+      values
+      (Response.create_int ())
+  ;;
+
+  let zrange t key ~min_index ~max_index =
+    command_key_range
+      t
+      [ "ZRANGE" ]
+      key
+      ~min_index
+      ~max_index
+      (Response.create Value_parser.list)
+  ;;
+
+  let zrem t key values =
+    command_keys_values t [ "ZREM" ] [ key ] values (Response.create_int ())
+  ;;
+
+  let zrangebylex t key ~min ~max =
+    command_key_lex_range
+      t
+      [ "ZRANGEBYLEX" ]
+      key
+      ~min
+      ~max
+      (Response.create Value_parser.list)
+  ;;
 end

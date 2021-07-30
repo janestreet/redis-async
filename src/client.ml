@@ -19,11 +19,18 @@ module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) = struct
     write_crlf writer
   ;;
 
-  let write_array_el (type w) writer (module IO : Bulk_io_intf.S with type t = w) el =
+  let write_array_el
+        (type w)
+        writer
+        (module IO : Bulk_io_intf.S with type t = w)
+        ?(prefix = "")
+        el
+    =
     let len = IO.Redis_bulk_io.length el in
     Writer.write_char writer '$';
-    Writer.write      writer (itoa len);
+    Writer.write      writer (len + String.length prefix |> itoa);
     write_crlf writer;
+    Writer.write writer prefix;
     IO.Redis_bulk_io.write ~len writer el;
     write_crlf writer
   ;;
@@ -99,6 +106,73 @@ module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) = struct
           write_array_el writer (module Key  ) key;
           write_array_el writer (module Value) value);
         Ivar.read R.this)
+  ;;
+
+  let command_key_scores_values
+        (type r)
+        t
+        ?result_of_empty_input
+        cmds
+        key
+        alist
+        (module R : Response_intf.S with type t = r)
+    =
+    match result_of_empty_input with
+    | Some result when List.is_empty alist -> return result
+    | _ ->
+      with_writer t (fun writer ->
+        Queue.enqueue t.pending_response (module R);
+        write_array_header writer (List.length cmds + 1 + (List.length alist * 2));
+        List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
+        write_array_el writer (module Key) key;
+        List.iter alist ~f:(fun (`Score score, value) ->
+          write_array_el writer (module Bulk_io.Float) score;
+          write_array_el writer (module Value) value);
+        Ivar.read R.this)
+  ;;
+
+  let command_key_range
+        (type r)
+        t
+        cmds
+        key
+        ~min_index
+        ~max_index
+        (module R : Response_intf.S with type t = r)
+    =
+    with_writer t (fun writer ->
+      Queue.enqueue t.pending_response (module R);
+      write_array_header writer (List.length cmds + 3);
+      List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
+      write_array_el writer (module Key) key;
+      write_array_el writer (module Bulk_io.Int) min_index;
+      write_array_el writer (module Bulk_io.Int) max_index;
+      Ivar.read R.this)
+  ;;
+
+  let command_key_lex_range
+        (type r)
+        t
+        cmds
+        key
+        ~min
+        ~max
+        (module R : Response_intf.S with type t = r)
+    =
+    with_writer t (fun writer ->
+      let write_bound bound infinite_symbol =
+        match bound with
+        | Unbounded  -> write_array_el writer (module Bulk_io.String) infinite_symbol
+        | Incl value -> write_array_el writer (module Value) value ~prefix:"["
+        | Excl value -> write_array_el writer (module Value) value ~prefix:"("
+      in
+      Queue.enqueue t.pending_response (module R);
+      write_array_header writer (List.length cmds + 3);
+      List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
+      write_array_el writer (module Key) key;
+      write_bound min "-";
+      write_bound max "+";
+      Ivar.read R.this)
   ;;
 
   (** Handle invalidation PUSH messages *)
