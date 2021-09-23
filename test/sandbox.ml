@@ -12,7 +12,14 @@ let t = Set_once.create ()
 
 let create () =
   let%bind.Deferred directory = Unix.mkdtemp "/dev/shm/redis" in
-  let unixsocket = directory ^ "/redis.sock" in
+  let unixsocket   = directory ^ "/redis.sock"   in
+  let redis_server = path      ^ "/redis-server" in
+  let%bind () =
+    match%map.Deferred Sys.file_exists redis_server with
+    | `Yes           -> Or_error.return ()
+    | `No | `Unknown ->
+      Or_error.error_s [%message [%here] "The redis binary was not found" ~redis_server]
+  in
   let%bind _ =
     Process.create
       ~prog:"bwrap"
@@ -25,7 +32,7 @@ let create () =
         ; "/proc"
         ; "--die-with-parent"
         ; "--"
-        ; path () ^ "/redis-server"
+        ; redis_server
         ; "--port"
         ; "0"
         ; "--unixsocket"
@@ -35,7 +42,13 @@ let create () =
         ]
       ()
   in
-  let%bind.Deferred () = Sys.when_file_exists unixsocket in
+  let%bind () =
+    match%map.Deferred
+      Clock_ns.with_timeout (Time_ns.Span.of_int_sec 30) (Sys.when_file_exists unixsocket)
+    with
+    | `Result () -> Ok ()
+    | `Timeout   -> Or_error.error_s [%message [%here] "Redis did not start"]
+  in
   let where_to_connect = Tcp.Where_to_connect.of_file unixsocket in
   Deferred.Or_error.return where_to_connect
 ;;
