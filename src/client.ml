@@ -9,9 +9,12 @@ type 'a t =
   ; mutable invalidations : [ `All | `Key of 'a ] Pipe.Writer.t list
   }
 
-module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) = struct
-  module Key_parser   = Parse_bulk.Make (Key  )
+module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_intf.S) =
+struct
+  module Key_parser   = Parse_bulk.Make (Key)
+  module Field_parser = Parse_bulk.Make (Field)
   module Value_parser = Parse_bulk.Make (Value)
+  module Field_value_map_parser = Parse_bulk.Make_map (Field_parser) (Value_parser)
 
   let write_array_header writer len =
     Writer.write_char writer '*';
@@ -60,26 +63,88 @@ module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) = struct
         Ivar.read R.this)
   ;;
 
-  let command_keys_values
-        (type r)
+  let command_keys_args
+        (type r a)
         t
         ?result_of_empty_input
         cmds
         key_args
-        value_args
-        (module R : Response_intf.S with type t = r)
+        args
+        (module Arg : Bulk_io_intf.S  with type t = a)
+        (module R   : Response_intf.S with type t = r)
     =
     match result_of_empty_input with
-    | Some result when List.is_empty key_args || List.is_empty value_args -> return result
+    | Some result when List.is_empty key_args || List.is_empty args -> return result
     | _ ->
       with_writer t (fun writer ->
         Queue.enqueue t.pending_response (module R);
         write_array_header
           writer
-          (List.length cmds + List.length key_args + List.length value_args);
-        List.iter cmds       ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
-        List.iter key_args   ~f:(fun arg -> write_array_el writer (module Key           ) arg);
-        List.iter value_args ~f:(fun arg -> write_array_el writer (module Value         ) arg);
+          (List.length cmds + List.length key_args + List.length args);
+        List.iter cmds     ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
+        List.iter key_args ~f:(fun arg -> write_array_el writer (module Key           ) arg);
+        List.iter args     ~f:(fun arg -> write_array_el writer (module Arg           ) arg);
+        Ivar.read R.this)
+  ;;
+
+  let command_keys_values t ?result_of_empty_input cmds key_args value_args response =
+    command_keys_args
+      t
+      ?result_of_empty_input
+      cmds
+      key_args
+      value_args
+      (module Value)
+      response
+  ;;
+
+  let command_keys_fields t ?result_of_empty_input cmds key_args field_args response =
+    command_keys_args
+      t
+      ?result_of_empty_input
+      cmds
+      key_args
+      field_args
+      (module Field)
+      response
+  ;;
+
+  let command_keys_string_args t ?result_of_empty_input cmds key_args args response =
+    command_keys_args
+      t
+      ?result_of_empty_input
+      cmds
+      key_args
+      args
+      (module Bulk_io.String)
+      response
+  ;;
+
+  let command_keys_fields_and_values
+        (type r)
+        t
+        ?result_of_empty_input
+        cmds
+        key_args
+        fields_and_value_args
+        (module R : Response_intf.S with type t = r)
+    =
+    match result_of_empty_input with
+    | Some result when List.is_empty key_args || List.is_empty fields_and_value_args ->
+      return result
+    | _ ->
+      with_writer t (fun writer ->
+        Queue.enqueue t.pending_response (module R);
+        write_array_header
+          writer
+          (List.length cmds
+           + List.length key_args
+           + (List.length fields_and_value_args * 2));
+        List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
+        List.iter key_args ~f:(fun arg -> write_array_el writer (module Key) arg);
+        List.iter fields_and_value_args ~f:(fun (field, value) ->
+          write_array_el writer (module Field) field;
+          write_array_el writer (module Value) value);
         Ivar.read R.this)
   ;;
 
@@ -298,10 +363,7 @@ module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) = struct
     in
     let pending_response = Queue.create ()                                          in
     let t                = { pending_response; reader; writer; invalidations = [] } in
-    don't_wait_for
-      (Writer.set_raise_when_consumer_leaves writer false;
-       let%bind.Deferred () = Writer.consumer_left writer in
-       close t);
+    Writer.set_raise_when_consumer_leaves writer false;
     don't_wait_for
       (let%bind reason = read t in
        let reason =

@@ -29,3 +29,6 @@ val create_resp3   : unit -> (module Response_intf.S with type t = Resp3.t)
 
 (** Create a response that expects an integer of 0 or 1 *)
 val create_01_bool : unit -> (module Response_intf.S with type t = bool)
+
+(** Create a response that expects a list of integers of 0 or 1 *)
+val create_01_bool_list : unit -> (module Response_intf.S with type t = bool list)

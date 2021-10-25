@@ -29,3 +29,18 @@ module type S = sig
   (** An int followed by a list. Example: SCAN *)
   val int_and_list : ([> read ], Iobuf.seek) Iobuf.t -> (int * t list)             Or_error.t
 end
+
+(** The term "map" here refers to a map node in the RESP3 protocol, which is represented
+    as an associative list. *)
+module type S_map = sig
+  type key
+  type value
+
+  (** field/value pairs. Example: HGETALL *)
+  val map : ([> read ], Iobuf.seek) Iobuf.t -> (key * value) list Or_error.t
+
+  (** An int followed by field/value pairs. Example: HSCAN *)
+  val int_and_alternating_key_value
+    :  ([> read ], Iobuf.seek) Iobuf.t
+    -> (int * (key * value) list) Or_error.t
+end

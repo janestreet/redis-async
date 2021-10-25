@@ -32,10 +32,23 @@ let create_int () =
 
 let create_resp3 () = create (fun buf -> Ok (Resp3.parse_exn buf))
 
-let create_01_bool () =
+let parse_01_bool = function
+  | Resp3.Int 0 -> Ok false
+  | Int 1       -> Ok true
+  | other       -> handle_unexpected other
+;;
+
+let create_01_bool () = create (fun buf -> Resp3.parse_exn buf |> parse_01_bool)
+
+let create_01_bool_list () =
   create (fun buf ->
     match Resp3.parse_exn buf with
-    | Int 0 -> Ok false
-    | Int 1 -> Ok true
+    | Array array ->
+      let%map.Or_error result =
+        Array.fold_result array ~init:[] ~f:(fun acc value ->
+          let%map.Or_error bool = parse_01_bool value in
+          bool :: acc)
+      in
+      List.rev result
     | other -> handle_unexpected other)
 ;;

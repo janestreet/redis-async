@@ -6,6 +6,8 @@ let backtrack_and_extract_error buf =
 ;;
 
 module Make (T : Bulk_io_intf.S) = struct
+  type t = T.t
+
   let single buf =
     match Resp3.consume_char buf with
     | '$' ->
@@ -65,6 +67,45 @@ module Make (T : Bulk_io_intf.S) = struct
                (sprintf !"Expected String but received %{sexp#mach:Resp3.t}" r))
       in
       let%map.Or_error l = list_internal ~parse_each:single buf in
+      i, l
+    | _ -> backtrack_and_extract_error buf
+  ;;
+end
+
+module Make_map (K : Parse_bulk_intf.S) (V : Parse_bulk_intf.S) = struct
+  let map_generic ~expected_initial_char ~decrement buf =
+    match Resp3.consume_char buf with
+    | char when Char.(char = expected_initial_char) ->
+      let len = Int.of_string (Resp3.simple_string buf) in
+      let rec make n l =
+        match n with
+        | 0 -> Ok (List.rev l)
+        | _ ->
+          let%bind.Or_error key   = K.single buf in
+          let%bind.Or_error value = V.single buf in
+          make (n - decrement) ((key, value) :: l)
+      in
+      make len []
+    | _ -> backtrack_and_extract_error buf
+  ;;
+
+  let map            buf = map_generic ~expected_initial_char:'%' ~decrement:1 buf
+  let alternating_kv buf = map_generic ~expected_initial_char:'*' ~decrement:2 buf
+
+  let int_and_alternating_key_value buf =
+    match Resp3.consume_char buf with
+    | '*' ->
+      Resp3.expect_char buf '2';
+      Resp3.expect_crlf buf;
+      let i =
+        match Resp3.parse_exn buf with
+        | String i -> Int.of_string i
+        | r        ->
+          raise
+            (Resp3.Protocol_error
+               (sprintf !"Expected String but received %{sexp#mach:Resp3.t}" r))
+      in
+      let%map.Or_error l = alternating_kv buf in
       i, l
     | _ -> backtrack_and_extract_error buf
   ;;

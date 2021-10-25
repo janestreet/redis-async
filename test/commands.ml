@@ -2,14 +2,23 @@ open! Core
 open  Async
 open  Redis
 open  Deferred.Or_error.Let_syntax
-module Expect_test_config = Expect_test_config_with_unit_expect_or_error
-module R                  = Redis.Make (Bulk_io.String) (Bulk_io.String)
+module Expect_test_config = Expect_test_config_or_error
+module R = Redis.Make (Bulk_io.String) (Bulk_io.String)
+module H = Redis.Make_hash (Bulk_io.String) (Bulk_io.String) (Bulk_io.String)
 
 let with_sandbox f =
   let%bind         where_to_connect = Sandbox.where_to_connect ()   in
   let%bind         r                = R.create ~where_to_connect () in
   let%bind         ()               = f r                           in
   let%map.Deferred ()               = R.close r                     in
+  Ok ()
+;;
+
+let with_hash_sandbox f =
+  let%bind         where_to_connect = Sandbox.where_to_connect ()   in
+  let%bind         h                = H.create ~where_to_connect () in
+  let%bind         ()               = f h                           in
+  let%map.Deferred ()               = H.close h                     in
   Ok ()
 ;;
 
@@ -45,8 +54,23 @@ let%expect_test "Strings" =
     let%bind response = R.get r "color" in
     print_s ([%sexp_of: string option] response);
     [%expect {| (blue) |}];
+    (* color already exists, so it should not be overriden, and none of the other values
+       should be set. *)
+    let%bind response = R.msetnx r [ "color", "gray"; "foo", "bar"; "baz", "foobaz" ] in
+    [%test_eq: bool] response false;
+    let%bind response = R.mget r [ "color"; "foo"; "baz" ] in
+    print_s [%sexp (response : string option list)];
+    [%expect {| ((blue) () ()) |}];
+    (* all of the keys are new keys, so they should be set *)
+    let%bind response = R.msetnx r [ "foo", "bar"; "baz", "foobaz" ] in
+    [%test_eq: bool] response true;
+    let%bind response = R.mget r [ "foo"; "baz" ] in
+    print_s [%sexp (response : string option list)];
+    [%expect {| ((bar) (foobaz)) |}];
     (* Special case for empty variadic inputs *)
-    let%bind ()       = R.mset r [] in
+    let%bind ()       = R.mset   r [] in
+    let%bind response = R.msetnx r [] in
+    [%test_eq: bool] response true;
     let%bind response = R.mget r [] in
     [%test_eq: string option list] response [];
     let%bind response = R.del r [] in
@@ -58,7 +82,7 @@ let%expect_test "Strings" =
     print_s
       ([%sexp_of: int * string list]
          (cursor, List.dedup_and_sort ~compare:String.compare (scan0 @ scan1)));
-    [%expect {| (0 (a color e)) |}];
+    [%expect {| (0 (a baz color e foo)) |}];
     return ())
 ;;
 
@@ -100,6 +124,14 @@ let%expect_test "set commands" =
     [%test_eq: int] response 3;
     let%bind () = query_and_print_members key_1 in
     [%expect {| (c e f) |}];
+    let%bind response = R.sismember r key_1 "a" in
+    [%test_eq: bool] response false;
+    let%bind response = R.sismember r key_1 "c" in
+    [%test_eq: bool] response true;
+    let%bind response = R.smismember r key_1 [] in
+    [%test_eq: bool list] response [];
+    let%bind response = R.smismember r key_1 [ "a"; "f" ] in
+    [%test_eq: bool list] response [ false; true ];
     return ())
 ;;
 
@@ -135,6 +167,54 @@ let%expect_test "sorted set commands" =
     [%test_eq: int] response 3;
     let%bind () = query_and_print_members key_1 in
     [%expect {| (c e f) |}];
+    return ())
+;;
+
+let%expect_test "hash commands" =
+  with_hash_sandbox (fun h ->
+    let key_1 = "1" in
+    (* HSET *)
+    let%bind response = H.hset h key_1 [] in
+    [%test_eq: int] response 0;
+    let%bind response = H.hset h key_1 [ "a", "A"; "b", "B"; "c", "C" ] in
+    [%test_eq: int] response 3;
+    (* HGET *)
+    let%bind response = H.hget h key_1 "a" in
+    [%test_eq: string option] response (Some "A");
+    let%bind response = H.hget h key_1 "d" in
+    [%test_eq: string option] response None;
+    (* HMGET *)
+    let%bind response = H.hmget h key_1 [] in
+    [%test_eq: string option list] response [];
+    let%bind response = H.hmget h key_1 [ "a"; "d" ] in
+    [%test_eq: string option list] response [ Some "A"; None ];
+    (* HGETALL *)
+    let%bind response = H.hgetall h key_1 in
+    [%test_eq: (string * string) list] response [ "a", "A"; "b", "B"; "c", "C" ];
+    (* HDEL *)
+    let%bind response = H.hdel h key_1 [] in
+    [%test_eq: int] response 0;
+    let%bind response = H.hdel h key_1 [ "d"; "c" ] in
+    [%test_eq: int] response 1;
+    (* HKEYS *)
+    let%bind response = H.hkeys h key_1 >>| List.sort ~compare:String.compare in
+    [%test_eq: string list] response [ "a"; "b" ];
+    (* HVALS *)
+    let%bind response = H.hvals h key_1 >>| List.sort ~compare:String.compare in
+    [%test_eq: string list] response [ "A"; "B" ];
+    (* HSCAN *)
+    let values = [ "a", "A"; "b", "B"; "c", "C"; "d", "D"; "e", "E" ] in
+    let%bind (_ : int) = H.hset h key_1 values in
+    let%bind response =
+      Deferred.Or_error.repeat_until_finished
+        (0 (* cursor *), [] (* values *))
+        (fun (cursor, values) ->
+           let%map `Cursor cursor, new_values = H.hscan h ~cursor ~count:2 key_1 in
+           let values = values @ new_values in
+           if cursor = 0 then `Finished values else `Repeat (cursor, values))
+      >>| List.dedup_and_sort ~compare:[%compare: string * string]
+    in
+    [%test_eq: (string * string) list] response values;
     return ())
 ;;
 

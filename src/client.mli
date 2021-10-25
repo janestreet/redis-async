@@ -5,9 +5,13 @@ open Async
 
 type 'a t
 
-module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) : sig
+module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_intf.S) : sig
   module Key_parser   : Parse_bulk_intf.S with type t := Key.t
+  module Field_parser : Parse_bulk_intf.S with type t := Field.t
   module Value_parser : Parse_bulk_intf.S with type t := Value.t
+
+  module Field_value_map_parser :
+    Parse_bulk_intf.S_map with type key := Field.t and type value := Value.t
 
   val create
     :  ?on_disconnect:(unit -> unit)
@@ -39,13 +43,37 @@ module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) : sig
     -> 'r Deferred.Or_error.t
 
   (** Send a command built from strings followed by serialized [Key.t]s, followed by
-      serialized [Value.t]s to Redis and expect a Response of the specified kind. *)
-  val command_keys_values
+      serialized command arguments to Redis and expect a Response of the specified kind. *)
+  type ('arg, 'r) command_key_args :=
+    Key.t t
+    -> ?result_of_empty_input:'r Or_error.t
+    -> string list
+    -> Key.t list
+    -> 'arg list
+    -> (module Response_intf.S with type t = 'r)
+    -> 'r Deferred.Or_error.t
+
+  (** Send a command built from strings followed by serialized [Key.t]s, followed by
+      Value.t arguments to Redis and expect a Response of the specified kind. *)
+  val command_keys_values : (Value.t, 'r) command_key_args
+
+  (** Send a command built from strings followed by serialized [Key.t]s, followed by
+      Field.t arguments to Redis and expect a Response of the specified kind. *)
+  val command_keys_fields : (Field.t, 'r) command_key_args
+
+  (** Send a command built from strings followed by serialized [Key.t]s, followed by
+      string arguments to Redis and expect a Response of the specified kind. *)
+  val command_keys_string_args : (string, 'r) command_key_args
+
+  (** Send a command built from strings followed by serialized [Key.t]s, followed by
+      serialized [Field.t], [Value.t] pairs to Redis and expect a Response of the
+      specified kind. *)
+  val command_keys_fields_and_values
     :  Key.t t
     -> ?result_of_empty_input:'r Or_error.t
     -> string list
     -> Key.t list
-    -> Value.t list
+    -> (Field.t * Value.t) list
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
 
