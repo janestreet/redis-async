@@ -102,6 +102,17 @@ let%expect_test "Command: keys" =
     return ())
 ;;
 
+let%expect_test "Command: incr" =
+  with_sandbox (fun r ->
+    (* Redis docs: "If the key does not exist, it is set to 0 before performing the
+       operation." *)
+    let%bind response = R.incr r "hi" in
+    [%test_eq: int] response 1;
+    let%bind response = R.incr r "hi" in
+    [%test_eq: int] response 2;
+    return ())
+;;
+
 let%expect_test "set commands" =
   with_sandbox (fun r ->
     let key_1 = "1" in

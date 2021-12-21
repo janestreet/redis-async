@@ -33,6 +33,7 @@ module type S_generic = sig
   val flushdb  : t -> unit Deferred.Or_error.t
   val shutdown : t -> unit Deferred.Or_error.t
   val echo     : t -> Key.t -> Key.t Deferred.Or_error.t
+  val incr     : t -> Key.t -> int Deferred.Or_error.t
   val del      : t -> Key.t list -> int Deferred.Or_error.t
   val unlink   : t -> Key.t list -> int Deferred.Or_error.t
   val dbsize   : t -> int Deferred.Or_error.t

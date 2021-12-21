@@ -33,6 +33,7 @@ struct
   let dbsize t      = command_string t [ "DBSIZE" ] (Response.create_int ())
   let exists t keys = command_key t [ "EXISTS" ] keys (Response.create_int ())
   let echo   t k    = command_key t [ "ECHO" ] [ k ] (Response.create Key_parser.single)
+  let incr   t k    = command_key t [ "INCR" ] [ k ] (Response.create_int ())
 
   let del t keys =
     command_key t ~result_of_empty_input:(Ok 0) [ "DEL" ] keys (Response.create_int ())
