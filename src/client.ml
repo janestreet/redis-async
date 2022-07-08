@@ -2,11 +2,22 @@ open Core
 open Async
 open Common
 
+(** Represents a subscriber to a pub/sub message where deserialization and result type are
+    specific to the individual subscriber. *)
+type subscriber =
+  | Subscriber :
+      { writer  : 'a Pipe.Writer.t
+      ; consume : (read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a
+      }
+      -> subscriber
+
 type 'a t =
   { pending_response      : (module Response_intf.S) Queue.t
   ; reader                : Reader.t
   ; writer                : Writer.t
   ; mutable invalidations : [ `All | `Key of 'a ] Pipe.Writer.t list
+  ; subscriptions         : subscriber list String.Table.t
+  ; pattern_subscriptions : subscriber list String.Table.t
   }
 
 module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_intf.S) =
@@ -158,6 +169,7 @@ struct
         ?result_of_empty_input
         cmds
         alist
+        args
         (module R : Response_intf.S with type t = r)
     =
     match result_of_empty_input with
@@ -165,11 +177,14 @@ struct
     | _ ->
       with_writer t (fun writer ->
         Queue.enqueue t.pending_response (module R);
-        write_array_header writer (List.length cmds + (List.length alist * 2));
+        write_array_header
+          writer
+          (List.length cmds + (List.length alist * 2) + List.length args);
         List.iter cmds  ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
         List.iter alist ~f:(fun (key, value) ->
           write_array_el writer (module Key  ) key;
           write_array_el writer (module Value) value);
+        List.iter args ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
         Ivar.read R.this)
   ;;
 
@@ -263,13 +278,32 @@ struct
              (command_string t [ "CLIENT"; "TRACKING"; "OFF" ] (Response.create_ok ()))))
   ;;
 
+  let handle_message subscriptions buf =
+    Resp3.expect_char buf '$';
+    let subscription = Resp3.blob_string buf in
+    match Hashtbl.find subscriptions subscription with
+    | None ->
+      raise_s
+        [%message
+          [%here]
+            "BUG: Received a message that was not subscribed to"
+            (subscription : string)]
+    | Some writers ->
+      let lo = Iobuf.Expert.lo buf in
+      List.iteri writers ~f:(fun i (Subscriber { writer; consume }) ->
+        if i <> 0 then Iobuf.Expert.set_lo buf lo;
+        let payload = consume (buf :> (read, Iobuf.seek) Iobuf.t) ~subscription in
+        Pipe.write_without_pushback_if_open writer payload;
+        ())
+  ;;
+
   (** Read RESP3 out-of-band push messages *)
   let read_push t buf =
     let len = Int.of_string (Resp3.simple_string buf) in
     Resp3.expect_char buf '$';
     let pushed = Resp3.blob_string buf in
-    match len, pushed, Resp3.peek_char buf with
-    | 2, "invalidate", '*' ->
+    match len, pushed with
+    | 2, "invalidate" ->
       (* As of Redis 6.0.8
          - When using BCAST the invalidation array can be larger than size 1, which is not
            documented in the protocol.
@@ -278,16 +312,29 @@ struct
            be the case}. For example: If I invalidate 3 keys using MSET the client should
            ideally receive 1 invalidation message with 3 keys, but instead receives 3
            invalidation message each with one key. *)
-      let keys = Key_parser.list buf |> Or_error.ok_exn in
-      List.iter keys ~f:(fun key -> invalidation t (`Key key))
-    | 2, "invalidate", '_' ->
-      Iobuf.advance buf 1;
-      Resp3.expect_crlf buf;
-      invalidation t `All
-    | _ ->
+      (match Resp3.peek_char buf with
+       | '*' ->
+         let keys = Key_parser.list buf |> Or_error.ok_exn in
+         List.iter keys ~f:(fun key -> invalidation t (`Key key))
+       | '_' ->
+         Iobuf.advance buf 1;
+         Resp3.expect_crlf buf;
+         invalidation t `All
+       | unexpected ->
+         raise
+           (Resp3.Protocol_error
+              (sprintf "Expected an invalidation message but observed '%c'" unexpected)))
+    | 3, "subscribe" | 3, "psubscribe" ->
+      (* Intentionally ignored, see comments for the [subscribe] command *)
+      ()
+    | 3  , "message"                   -> handle_message t.subscriptions buf
+    | 4  , "pmessage"                  -> handle_message t.pattern_subscriptions buf
+    | len, _                           ->
       raise_s
         [%message
-          "Received a PUSH message type which is not implemented" (pushed : string)]
+          "Received a PUSH message type which is not implemented"
+            (len : int)
+            (pushed : string)]
   ;;
 
   (** Read messages coming from the Redis to the client *)
@@ -352,7 +399,12 @@ struct
     let%bind () = Writer.close t.writer in
     let%map  () = Reader.close t.reader in
     List.iter t.invalidations ~f:Pipe.close;
-    t.invalidations <- []
+    t.invalidations <- [];
+    List.iter
+      (Hashtbl.data t.subscriptions @ Hashtbl.data t.pattern_subscriptions)
+      ~f:(fun subscribers ->
+        List.iter subscribers ~f:(fun (Subscriber { writer; consume = _ }) ->
+          Pipe.close writer))
   ;;
 
   let create ?on_disconnect ~where_to_connect () =
@@ -361,8 +413,16 @@ struct
          return an Error. *)
       Monitor.try_with_or_error (fun () -> Tcp.connect where_to_connect)
     in
-    let pending_response = Queue.create ()                                          in
-    let t                = { pending_response; reader; writer; invalidations = [] } in
+    let pending_response = Queue.create () in
+    let t =
+      { pending_response
+      ; reader
+      ; writer
+      ; invalidations         = []
+      ; subscriptions         = String.Table.create ()
+      ; pattern_subscriptions = String.Table.create ()
+      }
+    in
     Writer.set_raise_when_consumer_leaves writer false;
     don't_wait_for
       (let%bind reason = read t in
@@ -399,5 +459,48 @@ struct
       else Deferred.Or_error.return ()
     in
     reader
+  ;;
+
+  let subscribe_impl t channels ~command ~lookup ~consume =
+    (* Subscription command replies are unusual: Redis will respond using a separate push
+       message for each channel subscribed to, but unlike normal push messages, each is
+       expected to be in pipelined sequence like a normal command.
+
+       To deal with this we listen for push messages of "subscribe" and ignore them. The
+       receive loop continues and will treat the following message fragment as a normal
+       in-band protocol message. This command expects the same number of responses of this
+       shape as channels specified to the command. *)
+    let subscription_reader, subscription_writer = Pipe.create ()         in
+    let subscriber = Subscriber { consume; writer = subscription_writer } in
+    match
+      List.filter channels ~f:(fun channel ->
+        match Hashtbl.mem lookup channel with
+        | true  ->
+          Hashtbl.add_multi lookup ~key:channel ~data:subscriber;
+          false
+        | false -> true)
+    with
+    | [] -> Deferred.Or_error.return subscription_reader
+    | new_channels ->
+      let%map.Deferred.Or_error () =
+        with_writer t (fun writer ->
+          write_array_header writer (List.length channels + 1);
+          write_array_el writer (module Bulk_io.String) command;
+          Deferred.Or_error.all_unit
+            (List.map new_channels ~f:(fun channel ->
+               let (module R) = Response.create_subscription ~channel in
+               Queue.enqueue t.pending_response (module R);
+               write_array_el writer (module Bulk_io.String) channel;
+               let%map.Deferred.Or_error _ = Ivar.read R.this in
+               Hashtbl.add_exn lookup ~key:channel ~data:[ subscriber ])))
+      in
+      subscription_reader
+  ;;
+
+  let subscribe_raw t = function
+    | `Literal subscriptions ->
+      subscribe_impl t subscriptions ~command:"SUBSCRIBE" ~lookup:t.subscriptions
+    | `Pattern subscriptions ->
+      subscribe_impl t subscriptions ~command:"PSUBSCRIBE" ~lookup:t.pattern_subscriptions
   ;;
 end

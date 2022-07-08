@@ -84,6 +84,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> ?result_of_empty_input:'r Or_error.t
     -> string list
     -> (Key.t, Value.t) List.Assoc.t
+    -> string list
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
 
@@ -136,4 +137,10 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> ?bcast:bool
     -> unit
     -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
+
+  val subscribe_raw
+    :  _ t
+    -> [ `Literal of string list | `Pattern of string list ]
+    -> consume:((read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a)
+    -> 'a Pipe.Reader.t Deferred.Or_error.t
 end

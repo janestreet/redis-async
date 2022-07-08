@@ -12,6 +12,9 @@ let t = Set_once.create ()
 
 let create () =
   let%bind.Deferred directory = Unix.mkdtemp "/dev/shm/redis" in
+  Async_unix.(
+    Shutdown.at_shutdown (fun () ->
+      Process.run_expect_no_output_exn ~prog:"rm" ~args:[ "-rf"; directory ] ()));
   let unixsocket   = directory ^ "/redis.sock"   in
   let redis_server = path      ^ "/redis-server" in
   let%bind () =
@@ -37,8 +40,7 @@ let create () =
         ; "0"
         ; "--unixsocket"
         ; unixsocket
-        ; "--save"
-        ; {|""|}
+        ; "--save \"\""
         ]
       ()
   in
@@ -71,4 +73,12 @@ let where_to_connect () =
   let%bind redis = Redis_string.create ~where_to_connect () in
   let%map  ()    = Redis_string.flushall redis              in
   where_to_connect
+;;
+
+let run (type r) (module R : Redis.S with type t = r) f =
+  let%bind         where_to_connect = where_to_connect ()           in
+  let%bind         r                = R.create ~where_to_connect () in
+  let%bind         ()               = f r                           in
+  let%map.Deferred ()               = R.close r                     in
+  Ok ()
 ;;

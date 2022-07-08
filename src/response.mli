@@ -19,16 +19,23 @@ val create
   -> (module Response_intf.S with type t = 'a)
 
 (** Create a response that expects 'OK' *)
-val create_ok      : unit -> (module Response_intf.S with type t = unit)
+val create_ok           : unit -> (module Response_intf.S with type t = unit)
 
 (** Create a response that expects an integer *)
-val create_int     : unit -> (module Response_intf.S with type t = int)
+val create_int          : unit -> (module Response_intf.S with type t = int)
 
 (** Create a response that allows the full RESP3 representation *)
-val create_resp3   : unit -> (module Response_intf.S with type t = Resp3.t)
+val create_resp3        : unit -> (module Response_intf.S with type t = Resp3.t)
 
 (** Create a response that expects an integer of 0 or 1 *)
-val create_01_bool : unit -> (module Response_intf.S with type t = bool)
+val create_01_bool      : unit -> (module Response_intf.S with type t = bool)
 
 (** Create a response that expects a list of integers of 0 or 1 *)
 val create_01_bool_list : unit -> (module Response_intf.S with type t = bool list)
+
+(** Create a response that expects a specific string followed by a number, which is part
+    of the response to a SUBSCRIBE command *)
+val create_subscription : channel:string -> (module Response_intf.S with type t = int)
+
+(** Create a response that expects a string *)
+val create_string       : unit -> (module Response_intf.S with type t = string)

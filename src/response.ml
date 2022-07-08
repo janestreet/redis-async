@@ -52,3 +52,20 @@ let create_01_bool_list () =
       List.rev result
     | other -> handle_unexpected other)
 ;;
+
+let create_subscription ~channel =
+  create (fun buf ->
+    match Resp3.parse_exn buf with
+    | String s when String.(s = channel) ->
+      (match Resp3.parse_exn buf with
+       | Int i -> Ok i
+       | other -> handle_unexpected other)
+    | other -> handle_unexpected other)
+;;
+
+let create_string () =
+  create (fun buf ->
+    match Resp3.parse_exn buf with
+    | String s -> Ok s
+    | other    -> handle_unexpected other)
+;;

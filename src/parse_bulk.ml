@@ -5,18 +5,20 @@ let backtrack_and_extract_error buf =
   Error (Resp3.extract_error buf)
 ;;
 
+let apply_single buf ~f =
+  match Resp3.consume_char buf with
+  | '$' ->
+    let len    = Int.of_string (Resp3.simple_string buf) in
+    let result = f ~len buf                              in
+    Resp3.expect_crlf buf;
+    result
+  | _ -> backtrack_and_extract_error buf
+;;
+
 module Make (T : Bulk_io_intf.S) = struct
   type t = T.t
 
-  let single buf =
-    match Resp3.consume_char buf with
-    | '$' ->
-      let len    = Int.of_string (Resp3.simple_string buf) in
-      let result = T.Redis_bulk_io.consume buf ~len        in
-      Resp3.expect_crlf buf;
-      result
-    | _ -> backtrack_and_extract_error buf
-  ;;
+  let single buf = apply_single buf ~f:T.Redis_bulk_io.consume
 
   let single_opt buf =
     match Resp3.consume_char buf with
@@ -53,21 +55,21 @@ module Make (T : Bulk_io_intf.S) = struct
   let set_internal  = list_or_set_internal ~expected_initial_char:'~'
   let set buf       = set_internal ~parse_each:single buf
 
-  let int_and_list buf =
+  let cursor_and_list buf =
     match Resp3.consume_char buf with
     | '*' ->
       Resp3.expect_char buf '2';
       Resp3.expect_crlf buf;
-      let i =
+      let c =
         match Resp3.parse_exn buf with
-        | String i -> Int.of_string i
+        | String c -> Cursor.of_string c
         | r        ->
           raise
             (Resp3.Protocol_error
                (sprintf !"Expected String but received %{sexp#mach:Resp3.t}" r))
       in
       let%map.Or_error l = list_internal ~parse_each:single buf in
-      i, l
+      c, l
     | _ -> backtrack_and_extract_error buf
   ;;
 end
@@ -92,21 +94,21 @@ module Make_map (K : Parse_bulk_intf.S) (V : Parse_bulk_intf.S) = struct
   let map            buf = map_generic ~expected_initial_char:'%' ~decrement:1 buf
   let alternating_kv buf = map_generic ~expected_initial_char:'*' ~decrement:2 buf
 
-  let int_and_alternating_key_value buf =
+  let cursor_and_alternating_key_value buf =
     match Resp3.consume_char buf with
     | '*' ->
       Resp3.expect_char buf '2';
       Resp3.expect_crlf buf;
-      let i =
+      let c =
         match Resp3.parse_exn buf with
-        | String i -> Int.of_string i
+        | String c -> Cursor.of_string c
         | r        ->
           raise
             (Resp3.Protocol_error
                (sprintf !"Expected String but received %{sexp#mach:Resp3.t}" r))
       in
       let%map.Or_error l = alternating_kv buf in
-      i, l
+      c, l
     | _ -> backtrack_and_extract_error buf
   ;;
 end

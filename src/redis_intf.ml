@@ -7,8 +7,12 @@
 open! Core
 open  Async
 
-module type S_generic = sig
+module type S = sig
   module Key : sig
+    type t
+  end
+
+  module Field : sig
     type t
   end
 
@@ -33,6 +37,7 @@ module type S_generic = sig
   val flushdb  : t -> unit Deferred.Or_error.t
   val shutdown : t -> unit Deferred.Or_error.t
   val echo     : t -> Key.t -> Key.t Deferred.Or_error.t
+  val ping     : t -> string -> string Deferred.Or_error.t
   val incr     : t -> Key.t -> int Deferred.Or_error.t
   val del      : t -> Key.t list -> int Deferred.Or_error.t
   val unlink   : t -> Key.t list -> int Deferred.Or_error.t
@@ -42,10 +47,11 @@ module type S_generic = sig
 
   val scan
     :  t
-    -> cursor:int
+    -> cursor:Cursor.t
     -> ?count:int
+    -> ?pattern:string
     -> unit
-    -> ([ `Cursor of int ] * Key.t list) Deferred.Or_error.t
+    -> (Cursor.t * Key.t list) Deferred.Or_error.t
 
   (** Turn on Redis client tracking and provide a pipe of invalidation messages received
       from the server. Closing the pipe turns tracking off.
@@ -64,12 +70,8 @@ module type S_generic = sig
     -> ?bcast:bool
     -> unit
     -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
-end
 
-module type S = sig
-  include S_generic
-
-  val set        : t -> Key.t -> Value.t -> unit Deferred.Or_error.t
+  val set        : t -> Key.t -> ?expire:Time_ns.Span.t -> Value.t -> unit Deferred.Or_error.t
   val setnx      : t -> Key.t -> Value.t -> bool Deferred.Or_error.t
   val mset       : t -> (Key.t * Value.t) list -> unit Deferred.Or_error.t
   val msetnx     : t -> (Key.t * Value.t) list -> bool Deferred.Or_error.t
@@ -82,6 +84,13 @@ module type S = sig
   val srem       : t -> Key.t -> Value.t list -> int Deferred.Or_error.t
   val zadd       : t -> Key.t -> ([ `Score of float ] * Value.t) list -> int Deferred.Or_error.t
   val zrem       : t -> Key.t -> Value.t list -> int Deferred.Or_error.t
+
+  val pttl
+    :  t
+    -> Key.t
+    -> [ `Timeout of Time_ns.Span.t | `No_timeout | `No_key ] Deferred.Or_error.t
+
+  val pexpire : t -> Key.t -> Time_ns.Span.t -> [ `Set | `Not_set ] Deferred.Or_error.t
 
   val zrange
     :  t
@@ -96,14 +105,6 @@ module type S = sig
     -> min:Value.t Maybe_bound.t
     -> max:Value.t Maybe_bound.t
     -> Value.t list Deferred.Or_error.t
-end
-
-module type S_hash = sig
-  include S_generic
-
-  module Field : sig
-    type t
-  end
 
   val hset    : t -> Key.t -> (Field.t * Value.t) list -> int     Deferred.Or_error.t
   val hget    : t -> Key.t -> Field.t -> Value.t option           Deferred.Or_error.t
@@ -115,8 +116,28 @@ module type S_hash = sig
 
   val hscan
     :  t
-    -> cursor:int
+    -> cursor:Cursor.t
     -> ?count:int
     -> Key.t
-    -> ([ `Cursor of int ] * (Field.t * Value.t) list) Deferred.Or_error.t
+    -> (Cursor.t * (Field.t * Value.t) list) Deferred.Or_error.t
+
+  val keyevent_notifications
+    :  t
+    -> ([< Key_event.t ] as 'a) list
+    -> ('a * Key.t) Pipe.Reader.t Deferred.Or_error.t
+
+  val keyspace_notifications
+    :  t
+    -> ([< Key_event.t ] as 'a) list
+    -> patterns:string list
+    -> ('a * Key.t) Pipe.Reader.t Deferred.Or_error.t
+
+  val publish     : t -> string -> Key.t -> int Deferred.Or_error.t
+  val subscribe   : t -> string list -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
+  val psubscribe  : t -> string list -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
+  val script_load : t -> string -> Sha1.t Deferred.Or_error.t
+  val evalsha     : t -> Sha1.t -> Key.t list -> Value.t list -> Resp3.t Deferred.Or_error.t
+
+  val raw_command : t -> string list -> Resp3.t Deferred.Or_error.t
+  val version     : t -> string                 Deferred.Or_error.t
 end

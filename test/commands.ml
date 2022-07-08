@@ -4,23 +4,8 @@ open  Redis
 open  Deferred.Or_error.Let_syntax
 module Expect_test_config = Expect_test_config_or_error
 module R = Redis.Make (Bulk_io.String) (Bulk_io.String)
-module H = Redis.Make_hash (Bulk_io.String) (Bulk_io.String) (Bulk_io.String)
 
-let with_sandbox f =
-  let%bind         where_to_connect = Sandbox.where_to_connect ()   in
-  let%bind         r                = R.create ~where_to_connect () in
-  let%bind         ()               = f r                           in
-  let%map.Deferred ()               = R.close r                     in
-  Ok ()
-;;
-
-let with_hash_sandbox f =
-  let%bind         where_to_connect = Sandbox.where_to_connect ()   in
-  let%bind         h                = H.create ~where_to_connect () in
-  let%bind         ()               = f h                           in
-  let%map.Deferred ()               = H.close h                     in
-  Ok ()
-;;
+let with_sandbox = Sandbox.run (module R)
 
 let%expect_test "Strings" =
   with_sandbox (fun r ->
@@ -75,14 +60,43 @@ let%expect_test "Strings" =
     [%test_eq: string option list] response [];
     let%bind response = R.del r [] in
     [%test_eq: int] response 0;
-    let%bind `Cursor cursor, scan0 = R.scan r ~cursor:0 ~count:1 () in
-    let%bind `Cursor cursor, scan1 = R.scan r ~cursor            () in
+    let%bind cursor, scan0 = R.scan r ~cursor:Cursor.zero ~count:1 () in
+    let%bind cursor, scan1 = R.scan r ~cursor ()                      in
     (* The SCAN test is written to show summary results because this command is
        intentionally non-deterministic (see documentation) *)
     print_s
-      ([%sexp_of: int * string list]
+      ([%sexp_of: Cursor.t * string list]
          (cursor, List.dedup_and_sort ~compare:String.compare (scan0 @ scan1)));
     [%expect {| (0 (a baz color e foo)) |}];
+    let%bind cursor, scan3 = R.scan r ~cursor:Cursor.zero ~pattern:"[ab]*" () in
+    print_s
+      ([%sexp_of: Cursor.t * string list]
+         (cursor, List.dedup_and_sort ~compare:String.compare scan3));
+    [%expect {| (0 (a baz)) |}];
+    let%bind () = R.set r "has expire" "x" ~expire:Time_ns.Span.hour in
+    let print_timeout_opaque response =
+      print_endline
+        (match response with
+         (* Don't print the timeout value to make tests deterministic *)
+         | `Timeout _  -> "Timeout"
+         | `No_timeout -> "No_timeout"
+         | `No_key     -> "No_key")
+    in
+    let%bind response = R.pttl r "has expire" in
+    print_timeout_opaque response;
+    [%expect {| Timeout |}];
+    let%bind response = R.pttl r "foo" in
+    print_timeout_opaque response;
+    [%expect {| No_timeout |}];
+    let%bind response = R.pttl r "key that was never set" in
+    print_timeout_opaque response;
+    [%expect {| No_key |}];
+    let%bind response = R.pexpire r "foo" Time_ns.Span.hour in
+    print_s ([%sexp_of: [ `Set | `Not_set ]] response);
+    [%expect {| Set |}];
+    let%bind response = R.pexpire r "key that was never set" Time_ns.Span.hour in
+    print_s ([%sexp_of: [ `Set | `Not_set ]] response);
+    [%expect {| Not_set |}];
     return ())
 ;;
 
@@ -110,6 +124,13 @@ let%expect_test "Command: incr" =
     [%test_eq: int] response 1;
     let%bind response = R.incr r "hi" in
     [%test_eq: int] response 2;
+    return ())
+;;
+
+let%expect_test "Command: ping" =
+  with_sandbox (fun r ->
+    let%bind response = R.ping r "hi" in
+    [%test_eq: string] response "hi";
     return ())
 ;;
 
@@ -178,51 +199,56 @@ let%expect_test "sorted set commands" =
     [%test_eq: int] response 3;
     let%bind () = query_and_print_members key_1 in
     [%expect {| (c e f) |}];
+    let%bind response = R.raw_command r [ "echo"; "hello" ] in
+    print_s ([%sexp_of: Resp3.t] response);
+    [%expect {| (String hello) |}];
+    let%bind response = R.version r in
+    [%test_eq: string] response Sandbox.version;
     return ())
 ;;
 
 let%expect_test "hash commands" =
-  with_hash_sandbox (fun h ->
+  with_sandbox (fun r ->
     let key_1 = "1" in
     (* HSET *)
-    let%bind response = H.hset h key_1 [] in
+    let%bind response = R.hset r key_1 [] in
     [%test_eq: int] response 0;
-    let%bind response = H.hset h key_1 [ "a", "A"; "b", "B"; "c", "C" ] in
+    let%bind response = R.hset r key_1 [ "a", "A"; "b", "B"; "c", "C" ] in
     [%test_eq: int] response 3;
     (* HGET *)
-    let%bind response = H.hget h key_1 "a" in
+    let%bind response = R.hget r key_1 "a" in
     [%test_eq: string option] response (Some "A");
-    let%bind response = H.hget h key_1 "d" in
+    let%bind response = R.hget r key_1 "d" in
     [%test_eq: string option] response None;
     (* HMGET *)
-    let%bind response = H.hmget h key_1 [] in
+    let%bind response = R.hmget r key_1 [] in
     [%test_eq: string option list] response [];
-    let%bind response = H.hmget h key_1 [ "a"; "d" ] in
+    let%bind response = R.hmget r key_1 [ "a"; "d" ] in
     [%test_eq: string option list] response [ Some "A"; None ];
     (* HGETALL *)
-    let%bind response = H.hgetall h key_1 in
+    let%bind response = R.hgetall r key_1 in
     [%test_eq: (string * string) list] response [ "a", "A"; "b", "B"; "c", "C" ];
     (* HDEL *)
-    let%bind response = H.hdel h key_1 [] in
+    let%bind response = R.hdel r key_1 [] in
     [%test_eq: int] response 0;
-    let%bind response = H.hdel h key_1 [ "d"; "c" ] in
+    let%bind response = R.hdel r key_1 [ "d"; "c" ] in
     [%test_eq: int] response 1;
     (* HKEYS *)
-    let%bind response = H.hkeys h key_1 >>| List.sort ~compare:String.compare in
+    let%bind response = R.hkeys r key_1 >>| List.sort ~compare:String.compare in
     [%test_eq: string list] response [ "a"; "b" ];
     (* HVALS *)
-    let%bind response = H.hvals h key_1 >>| List.sort ~compare:String.compare in
+    let%bind response = R.hvals r key_1 >>| List.sort ~compare:String.compare in
     [%test_eq: string list] response [ "A"; "B" ];
     (* HSCAN *)
     let values = [ "a", "A"; "b", "B"; "c", "C"; "d", "D"; "e", "E" ] in
-    let%bind (_ : int) = H.hset h key_1 values in
+    let%bind (_ : int) = R.hset r key_1 values in
     let%bind response =
       Deferred.Or_error.repeat_until_finished
-        (0 (* cursor *), [] (* values *))
+        (Cursor.zero (* cursor *), [] (* values *))
         (fun (cursor, values) ->
-           let%map `Cursor cursor, new_values = H.hscan h ~cursor ~count:2 key_1 in
+           let%map cursor, new_values = R.hscan r ~cursor ~count:2 key_1 in
            let values = values @ new_values in
-           if cursor = 0 then `Finished values else `Repeat (cursor, values))
+           if Cursor.(cursor = zero) then `Finished values else `Repeat (cursor, values))
       >>| List.dedup_and_sort ~compare:[%compare: string * string]
     in
     [%test_eq: (string * string) list] response values;
@@ -364,17 +390,6 @@ let%expect_test "Large message" =
     return ())
 ;;
 
-let%expect_test "Sending a bulk that is too big will fail" =
-  with_sandbox (fun r ->
-    let count = 1_000_000 in
-    let%bind.Deferred response =
-      R.mset r (List.init count ~f:(fun i -> Int.to_string i, Int.to_string i))
-    in
-    print_s ([%sexp_of: unit Or_error.t] response);
-    [%expect {| (Error "ERR Protocol error: invalid multibulk length") |}];
-    return ())
-;;
-
 let%expect_test "Bulk messages up to maximum size works" =
   with_sandbox (fun r ->
     let count = 511_482 in
@@ -386,6 +401,86 @@ let%expect_test "Bulk messages up to maximum size works" =
     in
     print_s ([%sexp_of: unit Or_error.t] (Or_error.ignore_m response));
     [%expect {| (Ok ()) |}];
+    return ())
+;;
+
+module Subscription_data = struct
+  type 'a t =
+    [ `Eof
+    | `Nothing_available
+    | `Ok of ('a * string) Base.Queue.t
+    ]
+  [@@deriving sexp_of]
+end
+
+let%expect_test "pub/sub" =
+  with_sandbox (fun r ->
+    let%bind reader   = R.subscribe  r [ "foo"; "bar" ] in
+    let%bind p_reader = R.psubscribe r [ "f*"         ] in
+    let p () =
+      print_s
+        [%message
+          ""
+            ~subscribe:(Pipe.read_now' reader : string Subscription_data.t)
+            ~psubscribe:(Pipe.read_now' p_reader : string Subscription_data.t)]
+    in
+    p ();
+    [%expect {| ((subscribe Nothing_available) (psubscribe Nothing_available)) |}];
+    let%bind how_many_subscribers = R.publish r "foo" "hello" in
+    [%test_eq: int] how_many_subscribers 2;
+    p ();
+    [%expect {| ((subscribe (Ok ((foo hello)))) (psubscribe (Ok ((foo hello))))) |}];
+    let%bind how_many_subscribers = R.publish r "baz" "nobody is listening" in
+    [%test_eq: int] how_many_subscribers 0;
+    p ();
+    [%expect {| ((subscribe Nothing_available) (psubscribe Nothing_available)) |}];
+    let%bind how_many_subscribers = R.publish r "bar" "different channel, same pipe" in
+    [%test_eq: int] how_many_subscribers 1;
+    p ();
+    [%expect
+      {|
+      ((subscribe (Ok ((bar "different channel, same pipe"))))
+       (psubscribe Nothing_available)) |}];
+    return ())
+;;
+
+let%expect_test "keyspace notifications" =
+  with_sandbox (fun r ->
+    (* The two readers intentionally have different event configurations. This exercies
+       that event configuration is at the Redis instance level and notifications are
+       broadcast (not per client), so it is possible to construct readers that will
+       receive events that they did not request. Readers should drop such events. *)
+    let%bind keyevent_reader = R.keyevent_notifications r [ `del; `expire ]           in
+    let%bind keyspace_reader = R.keyspace_notifications r [ `del ] ~patterns:[ "f*" ] in
+    let p () =
+      print_s
+        [%message
+          ""
+            ~keyevent:(Pipe.read_now' keyevent_reader : Key_event.t Subscription_data.t)
+            ~keyspace:(Pipe.read_now' keyspace_reader : Key_event.t Subscription_data.t)]
+    in
+    p ();
+    [%expect {| ((keyevent Nothing_available) (keyspace Nothing_available)) |}];
+    let%bind () = R.mset r [ "foo", "hello"; "bar", "baz" ] in
+    let%bind _  = R.del r [ "foo"; "was never set"; "bar" ] in
+    let%bind _  = R.echo r "wait for a round trip"          in
+    p ();
+    [%expect {| ((keyevent (Ok ((del foo) (del bar)))) (keyspace (Ok ((del foo))))) |}];
+    let%bind          _  = R.set r "foo" "back again" ~expire:Time_ns.Span.millisecond in
+    let%bind.Deferred () = Clock_ns.after Time_ns.Span.millisecond                     in
+    (* get has a side effect of forcing expiry evaluation *)
+    let%bind          _  = R.get r "foo"                                               in
+    p ();
+    [%expect {| ((keyevent (Ok ((expire foo)))) (keyspace Nothing_available)) |}];
+    return ())
+;;
+
+let%expect_test "scripting" =
+  with_sandbox (fun r ->
+    let%bind sha1 = R.script_load r {|return {"Hello, world", KEYS[1], ARGV[1]}|} in
+    let%bind response = R.evalsha r sha1 [ "foo" ] [ "bar" ] in
+    print_s ([%sexp_of: Redis.Resp3.t] response);
+    [%expect {| (Array ((String "Hello, world") (String foo) (String bar))) |}];
     return ())
 ;;
 
