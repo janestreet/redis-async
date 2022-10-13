@@ -24,7 +24,17 @@ module type S = sig
 
   val create
     :  ?on_disconnect:(unit -> unit)
+    -> ?auth:Auth.t
     -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t
+    -> unit
+    -> t Deferred.Or_error.t
+
+  val create_using_sentinel
+    :  ?on_disconnect:(unit -> unit)
+    -> ?sentinel_auth:Auth.t
+    -> ?auth:Auth.t
+    -> leader_name:string
+    -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t list
     -> unit
     -> t Deferred.Or_error.t
 
@@ -106,6 +116,13 @@ module type S = sig
     -> max:Value.t Maybe_bound.t
     -> Value.t list Deferred.Or_error.t
 
+  val zrangebyscore
+    :  t
+    -> Key.t
+    -> min_score:float Maybe_bound.t
+    -> max_score:float Maybe_bound.t
+    -> Value.t list Deferred.Or_error.t
+
   val hset    : t -> Key.t -> (Field.t * Value.t) list -> int     Deferred.Or_error.t
   val hget    : t -> Key.t -> Field.t -> Value.t option           Deferred.Or_error.t
   val hmget   : t -> Key.t -> Field.t list -> Value.t option list Deferred.Or_error.t
@@ -132,12 +149,37 @@ module type S = sig
     -> patterns:string list
     -> ('a * Key.t) Pipe.Reader.t Deferred.Or_error.t
 
-  val publish     : t -> string -> Key.t -> int Deferred.Or_error.t
-  val subscribe   : t -> string list -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
-  val psubscribe  : t -> string list -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
-  val script_load : t -> string -> Sha1.t Deferred.Or_error.t
-  val evalsha     : t -> Sha1.t -> Key.t list -> Value.t list -> Resp3.t Deferred.Or_error.t
+  val publish   : t -> string -> Key.t -> int Deferred.Or_error.t
+  val subscribe : t -> string list -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
 
+  val subscribe_raw
+    :  t
+    -> [ `Literal of string list | `Pattern of string list ]
+    -> consume:((read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a)
+    -> 'a Pipe.Reader.t Deferred.Or_error.t
+
+  val psubscribe  : t -> string list -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
+  val script_load : t -> string      -> Sha1.t                         Deferred.Or_error.t
+
+  val evalsha     : t -> Sha1.t -> Key.t list -> Value.t list -> Resp3.t Deferred.Or_error.t
   val raw_command : t -> string list -> Resp3.t Deferred.Or_error.t
-  val version     : t -> string                 Deferred.Or_error.t
+  val version     : t -> string Deferred.Or_error.t
+  val role        : t -> Role.t Deferred.Or_error.t
+
+  (** ACL and authentication commands.
+
+      Read here for more:
+
+      https://redis.io/docs/manual/security/acl/#command-categories
+      https://redis.io/docs/manual/security/acl/#selectors
+  *)
+  val acl_setuser : t -> username:string -> rules:string list -> unit Deferred.Or_error.t
+
+
+  val auth        : t -> auth:Auth.t     -> unit              -> unit Deferred.Or_error.t
+
+  (** Sentinel specific commands. These will fail if not directly connected to a sentinel.
+
+      Read here for more: https://redis.io/docs/manual/sentinel/#sentinel-api *)
+  val sentinel_leader : t -> string -> Host_and_port.t Deferred.Or_error.t
 end

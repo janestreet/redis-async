@@ -3,6 +3,8 @@ module Bulk_io   = Bulk_io
 module Resp3     = Resp3
 module Key_event = Key_event
 module Cursor    = Cursor
+module Role      = Role
+module Auth      = Auth
 
 module type S = Redis_intf.S
 

@@ -6,6 +6,8 @@ module Bulk_io   = Bulk_io
 module Resp3     = Resp3
 module Key_event = Key_event
 module Cursor    = Cursor
+module Role      = Role
+module Auth      = Auth
 
 module type S = Redis_intf.S
 
@@ -189,6 +191,16 @@ struct
       (Response.create Value_parser.list)
   ;;
 
+  let zrangebyscore t key ~min_score ~max_score =
+    command_key_score_range
+      t
+      [ "ZRANGEBYSCORE" ]
+      key
+      ~min_score
+      ~max_score
+      (Response.create Value_parser.list)
+  ;;
+
   let hset t k fvs =
     command_keys_fields_and_values
       t
@@ -318,7 +330,8 @@ struct
         ~consume:(fun buf ~subscription:_ ->
           let key =
             Parse_bulk.apply_single buf ~f:(fun ~len buf ->
-              Iobuf.advance buf 15;
+              Common.check_length_exn buf ~len:15;
+              Iobuf.unsafe_advance buf 15;
               Key.Redis_bulk_io.consume buf ~len:(len - 15))
             |> Or_error.ok_exn
           in
@@ -355,6 +368,24 @@ struct
       Resp3.expect_char buf '$';
       let channel = Resp3.blob_string buf in
       channel, Or_error.ok_exn (Key_parser.single buf))
+  ;;
+
+  let role t = command_string t [ "ROLE" ] (Response.create_role ())
+
+  let sentinel_leader t name =
+    command_string
+      t
+      [ "SENTINEL"; "GET-MASTER-ADDR-BY-NAME"; name ]
+      (Response.create_host_and_port ())
+  ;;
+
+  let auth t ~auth:{ Auth.username; password } () =
+    let cmds = [ "AUTH"; username; password ] in
+    command_string t cmds (Response.create_ok ())
+  ;;
+
+  let acl_setuser t ~username ~rules =
+    command_string t ([ "ACL"; "SETUSER"; username ] @ rules) (Response.create_ok ())
   ;;
 
   let raw_command t commands = command_string t commands (Response.create_resp3 ())

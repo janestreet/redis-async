@@ -13,9 +13,26 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
   module Field_value_map_parser :
     Parse_bulk_intf.S_map with type key := Field.t and type value := Value.t
 
+  (** Create a client that connects directly to a Redis node. [on_disconnect] will be
+      called after disconnecting from the Redis node. *)
   val create
     :  ?on_disconnect:(unit -> unit)
+    -> ?auth:Auth.t
     -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t
+    -> unit
+    -> Key.t t Deferred.Or_error.t
+
+  (** Create a client that connects to a Redis node via Redis Sentinel. [on_disconnect]
+      will not be called after failing to find and connect to a leader node. Instead, this
+      will return an error.
+
+      Does not automatically reconnect in case of failure. *)
+  val create_using_sentinel
+    :  ?on_disconnect:(unit -> unit)
+    -> ?sentinel_auth:Auth.t
+    -> ?auth:Auth.t
+    -> leader_name:string
+    -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t list
     -> unit
     -> Key.t t Deferred.Or_error.t
 
@@ -108,6 +125,18 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> Key.t
     -> min_index:int
     -> max_index:int
+    -> (module Response_intf.S with type t = 'r)
+    -> 'r Deferred.Or_error.t
+
+  (** Send a command built from strings followed by [Key.t], followed by
+      [float Maybe_bound.t]s range items to Redis and expect a Response
+      of the specified kind. *)
+  val command_key_score_range
+    :  Key.t t
+    -> string list
+    -> Key.t
+    -> min_score:float Maybe_bound.t
+    -> max_score:float Maybe_bound.t
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
 

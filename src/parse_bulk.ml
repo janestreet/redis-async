@@ -1,7 +1,9 @@
 open Core
 
 let backtrack_and_extract_error buf =
-  Iobuf.unsafe_advance buf (-1);
+  (* These expert calls are safe because we know we read a character off [buf] right
+     before calling this function. *)
+  Iobuf.Expert.set_lo buf (Iobuf.Expert.lo buf - 1);
   Error (Resp3.extract_error buf)
 ;;
 

@@ -5,7 +5,40 @@ open  Deferred.Or_error.Let_syntax
 module Expect_test_config = Expect_test_config_or_error
 module R = Redis.Make (Bulk_io.String) (Bulk_io.String)
 
-let with_sandbox = Sandbox.run (module R)
+let with_sandbox f =
+  let%bind () = Sandbox.run (module R) f in
+  Sandbox.run_sentinel (module R) f
+;;
+
+let print_error = function
+  | Ok    _ -> raise_s [%message "Error expected"]
+  | Error e -> print_s ([%sexp_of: Error.t] e)
+;;
+
+let%expect_test "Roles" =
+  let print_role r =
+    let%map response = R.role r >>| Role.For_testing.zero_ports in
+    print_s ([%sexp_of: Role.t] response)
+  in
+  let%bind () = Sandbox.run_replica (module R) print_role in
+  [%expect
+    {|
+    (Replica
+     ((leader (127.0.0.1 0)) (connection_state Connected) (replication_offset 0))) |}];
+  let%bind () = Sandbox.run (module R) print_role in
+  [%expect
+    {|
+    (Leader
+     ((replication_offset 41)
+      (replicas (((where_to_connect (127.0.0.1 0)) (replication_offset 0)))))) |}];
+  let%bind          _, where_to_connect = Sandbox.where_to_connect_sentinel () in
+  let%bind          r                   = R.create ~where_to_connect ()        in
+  let%bind          ()                  = print_role r                         in
+  [%expect {|
+    (Sentinel (test)) |}];
+  let%bind.Deferred ()                  = R.close r                            in
+  Deferred.Or_error.ok_unit
+;;
 
 let%expect_test "Strings" =
   with_sandbox (fun r ->
@@ -175,17 +208,18 @@ let%expect_test "sorted set commands" =
       print_s ([%sexp_of: string list] members)
     in
     let%bind response =
-      R.zadd r key_1 [ `Score 0., "a"; `Score 0., "b"; `Score 0., "c"; `Score 0., "d" ]
+      R.zadd r key_1 [ `Score 1., "a"; `Score 2., "b"; `Score 3., "c"; `Score 4., "d" ]
     in
     [%test_eq: int] response 4;
     let%bind () = query_and_print_members key_1 in
     [%expect {| (a b c d) |}];
     let%bind response =
-      R.zadd r key_1 [ `Score 0., "c"; `Score 0., "d"; `Score 0., "e"; `Score 0., "f" ]
+      R.zadd r key_1 [ `Score 3., "c"; `Score 4., "d"; `Score 5., "e"; `Score 6., "f" ]
     in
     [%test_eq: int] response 2;
     let%bind () = query_and_print_members key_1 in
     [%expect {| (a b c d e f) |}];
+    (* [zrangebylex] *)
     let%bind response = R.zrangebylex r key_1 ~min:(Incl "b") ~max:(Excl "e") in
     print_s ([%sexp_of: string list] response);
     [%expect {| (b c d) |}];
@@ -195,6 +229,23 @@ let%expect_test "sorted set commands" =
     let%bind response = R.zrangebylex r key_1 ~min:Unbounded ~max:(Incl "d") in
     print_s ([%sexp_of: string list] response);
     [%expect {| (a b c d) |}];
+    (* [zrangebyscore] *)
+    let%bind response =
+      R.zrangebyscore r key_1 ~min_score:(Incl 1.) ~max_score:(Excl 5.)
+    in
+    print_s ([%sexp_of: string list] response);
+    [%expect {| (a b c d) |}];
+    let%bind response =
+      R.zrangebyscore r key_1 ~min_score:(Excl 1.) ~max_score:Unbounded
+    in
+    print_s ([%sexp_of: string list] response);
+    [%expect {| (b c d e f) |}];
+    let%bind response =
+      R.zrangebyscore r key_1 ~min_score:Unbounded ~max_score:(Incl 4.)
+    in
+    print_s ([%sexp_of: string list] response);
+    [%expect {| (a b c d) |}];
+    (* [rem] *)
     let%bind response = R.zrem r key_1 [ "a"; "b"; "d"; "g" ] in
     [%test_eq: int] response 3;
     let%bind () = query_and_print_members key_1 in
@@ -305,7 +356,7 @@ let%expect_test "Bin_prot" =
   end
   in
   let module R = Redis.Make (Key) (Value) in
-  let%bind where_to_connect = Sandbox.where_to_connect ()                           in
+  let%bind where_to_connect, _ = Sandbox.where_to_connect ()                        in
   let%bind r = R.create ~where_to_connect ()                                        in
   let%bind () = R.set r { Key.msg = "hello" } { Value.color = "blue"; number = 42 } in
   let%bind response = R.get r { Key.msg = "hello" }                                 in
@@ -334,10 +385,10 @@ let%expect_test "Bin_prot" =
 ;;
 
 let%expect_test "Invalidation" =
-  let%bind where_to_connect = Sandbox.where_to_connect   () in
-  let%bind reader           = R.create ~where_to_connect () in
-  let%bind writer           = R.create ~where_to_connect () in
-  let%bind invalidation     = R.client_tracking reader   () in
+  let%bind where_to_connect, _ = Sandbox.where_to_connect   () in
+  let%bind reader              = R.create ~where_to_connect () in
+  let%bind writer              = R.create ~where_to_connect () in
+  let%bind invalidation        = R.client_tracking reader   () in
   let expect_invalidation () =
     let%map.Deferred result = Pipe.read invalidation in
     Ok (print_s ([%sexp_of: [ `Ok of [ `All | `Key of string ] | `Eof ]] result))
@@ -359,10 +410,10 @@ let%expect_test "Invalidation" =
 ;;
 
 let%expect_test "Broadcast invalidation" =
-  let%bind where_to_connect = Sandbox.where_to_connect             () in
-  let%bind reader           = R.create ~where_to_connect           () in
-  let%bind writer           = R.create ~where_to_connect           () in
-  let%bind invalidation     = R.client_tracking ~bcast:true reader () in
+  let%bind where_to_connect, _ = Sandbox.where_to_connect             () in
+  let%bind reader              = R.create ~where_to_connect           () in
+  let%bind writer              = R.create ~where_to_connect           () in
+  let%bind invalidation        = R.client_tracking ~bcast:true reader () in
   let expect_invalidation () =
     let%map.Deferred result = Pipe.read invalidation in
     Ok (print_s ([%sexp_of: [ `Ok of [ `All | `Key of string ] | `Eof ]] result))
@@ -484,17 +535,66 @@ let%expect_test "scripting" =
     return ())
 ;;
 
+let%expect_test "authentication" =
+  with_sandbox (fun r ->
+    let password = "notSOs3cret"                     in
+    let username = "username"                        in
+    let auth     = { Redis.Auth.username; password } in
+    (* rule where only this user can run all commands on two keys *)
+    let rules =
+      [ "on"; sprintf ">%s" password; "~foo"; "&foo"; "~foo-set"; "&foo-set"; "+@all" ]
+    in
+    let%bind          ()    = R.acl_setuser r ~username ~rules              in
+    (* sane error when we provide the wrong pwd *)
+    let%bind.Deferred error = R.auth r ~auth:{ auth with password = "" } () in
+    print_error error;
+    [%expect {| "WRONGPASS invalid username-password pair or user is disabled." |}];
+    let%bind () = R.auth r ~auth ()    in
+    (* check no error when user has permissions to access key *)
+    let%bind () = R.set  r "foo" "bar" in
+    let%bind response = R.get r "foo"  in
+    print_s ([%sexp_of: string option] response);
+    [%expect {| (bar) |}];
+    (* check error when user does not have permissions to access key *)
+    let%bind          ()    = R.set r "foo" "bar" in
+    let%bind.Deferred error = R.get r "bar"       in
+    print_error error;
+    [%expect
+      {| "NOPERM this user has no permissions to access one of the keys used as arguments" |}];
+    (* check no error when accessing a field that's encoded differently in reps2 and resp3 *)
+    let%bind response = R.sadd r "foo-set" [ "bar" ] in
+    print_s ([%sexp_of: int] response);
+    [%expect {| 1 |}];
+    let%bind response = R.smembers r "foo-set" in
+    print_s ([%sexp_of: string list] response);
+    [%expect {| (bar) |}];
+    (* check error when no permission to subscribe *)
+    let%bind.Deferred error = R.subscribe r [ "foo"; "bar" ] in
+    print_error error;
+    [%expect
+      {| "NOPERM this user has no permissions to access one of the channels used as arguments" |}];
+    (* check error when no permission to subscribe ii *)
+    let%bind.Deferred error = R.subscribe r [ "bar"; "foo" ] in
+    print_error error;
+    [%expect
+      {| "NOPERM this user has no permissions to access one of the channels used as arguments" |}];
+    (* check no error when permission to subscribe **THIS TEST MUST BE LAST** *)
+    let%bind (_ : _ Pipe.Reader.t) = R.subscribe r [ "foo" ] in
+    return ())
+;;
+
 let%expect_test "Disconnect **THIS TEST MUST BE LAST**" =
-  let%bind where_to_connect = Sandbox.where_to_connect () in
   let on_disconnect () = print_endline "on_disconnect" in
-  let%bind          r        = R.create ~on_disconnect ~where_to_connect () in
-  let%bind.Deferred response = R.shutdown r                                 in
+  let%bind.Deferred response = Sandbox.teardown ~on_disconnect () in
   print_s ([%sexp_of: unit Or_error.t] response);
-  [%expect {|
+  [%expect
+    {|
     on_disconnect
-    (Error Disconnected) |}];
-  let%bind.Deferred response = R.echo r "hello" in
-  print_s ([%sexp_of: string Or_error.t] response);
-  [%expect {| (Error Disconnected) |}];
+    on_disconnect
+    on_disconnect
+    (Error
+     ("Disconnected from Redis: see server logs for detail"
+      "Disconnected from Redis: see server logs for detail"
+      "Disconnected from Redis: see server logs for detail")) |}];
   return ()
 ;;

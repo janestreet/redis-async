@@ -2,6 +2,8 @@ open Core
 open Async
 open Common
 
+let disconnect_message = "Disconnected from Redis: see server logs for detail"
+
 (** Represents a subscriber to a pub/sub message where deserialization and result type are
     specific to the individual subscriber. *)
 type subscriber =
@@ -51,7 +53,7 @@ struct
 
   let with_writer t f =
     if Writer.is_closed t.writer
-    then Deferred.Or_error.error_string "Disconnected"
+    then Deferred.Or_error.error_string disconnect_message
     else f t.writer
   ;;
 
@@ -230,6 +232,58 @@ struct
       Ivar.read R.this)
   ;;
 
+  let command_key_bounded_range
+        (type r s)
+        t
+        cmds
+        key
+        ~min
+        ~max
+        ~infinity_min
+        ~infinity_max
+        ~incl_prefix
+        (module R     : Response_intf.S with type t = r)
+        (module Value : Bulk_io.S       with type t = s)
+    =
+    with_writer t (fun writer ->
+      let write_bound bound infinite_symbol =
+        match bound with
+        | Unbounded  -> write_array_el writer (module Bulk_io.String) infinite_symbol
+        | Incl value -> write_array_el writer (module Value) value ~prefix:incl_prefix
+        | Excl value -> write_array_el writer (module Value) value ~prefix:"("
+      in
+      Queue.enqueue t.pending_response (module R);
+      write_array_header writer (List.length cmds + 3);
+      List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
+      write_array_el writer (module Key) key;
+      write_bound min infinity_min;
+      write_bound max infinity_max;
+      Ivar.read R.this)
+  ;;
+
+  let command_key_score_range
+        (type r)
+        t
+        cmds
+        key
+        ~min_score:min
+        ~max_score:max
+        (module R : Response_intf.S with type t = r)
+    =
+    (* https://redis.io/commands/zrangebyscore/#exclusive-intervals-and-infinity *)
+    command_key_bounded_range
+      t
+      cmds
+      key
+      ~min
+      ~max
+      ~infinity_min:"-inf"
+      ~infinity_max:"+inf"
+      ~incl_prefix:""
+      (module R)
+      (module Bulk_io.Float)
+  ;;
+
   let command_key_lex_range
         (type r)
         t
@@ -239,20 +293,18 @@ struct
         ~max
         (module R : Response_intf.S with type t = r)
     =
-    with_writer t (fun writer ->
-      let write_bound bound infinite_symbol =
-        match bound with
-        | Unbounded  -> write_array_el writer (module Bulk_io.String) infinite_symbol
-        | Incl value -> write_array_el writer (module Value) value ~prefix:"["
-        | Excl value -> write_array_el writer (module Value) value ~prefix:"("
-      in
-      Queue.enqueue t.pending_response (module R);
-      write_array_header writer (List.length cmds + 3);
-      List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
-      write_array_el writer (module Key) key;
-      write_bound min "-";
-      write_bound max "+";
-      Ivar.read R.this)
+    (* https://redis.io/commands/zrangebylex/#how-to-specify-intervals *)
+    command_key_bounded_range
+      t
+      cmds
+      key
+      ~min
+      ~max
+      ~infinity_min:"-"
+      ~infinity_max:"+"
+      ~incl_prefix:"["
+      (module R    )
+      (module Value)
   ;;
 
   (** Handle invalidation PUSH messages *)
@@ -407,7 +459,7 @@ struct
           Pipe.close writer))
   ;;
 
-  let create ?on_disconnect ~where_to_connect () =
+  let create ?on_disconnect ?auth ~where_to_connect () =
     let%bind.Deferred.Or_error _socket, reader, writer =
       (* Tcp.connect will raise if the connection attempt times out, but we'd prefer to
          return an Error. *)
@@ -428,7 +480,7 @@ struct
       (let%bind reason = read t in
        let reason =
          match reason with
-         | `Eof | `Eof_with_unconsumed_data _ -> Error.of_string "Disconnected"
+         | `Eof | `Eof_with_unconsumed_data _ -> Error.of_string disconnect_message
          | `Stopped exn                       -> Error.of_exn exn
        in
        let%map () = close t in
@@ -437,11 +489,101 @@ struct
          Ivar.fill R.this (Error reason));
        Queue.clear t.pending_response;
        Option.iter on_disconnect ~f:(fun f -> f ()));
-    (* Tell the session that we will be speaking RESP3 *)
-    let%map.Deferred.Or_error _ =
-      command_string t [ "HELLO"; "3" ] (Response.create_resp3 ())
+    (* Tell the session that we will be speaking RESP3 and authenticate if need be *)
+    let cmds =
+      [ "HELLO"; "3" ]
+      (* When protover (i.e. 2/3) is used, we can also pass [AUTH] and [SETNAME] to [HELLO]. *)
+      @ Option.value_map auth ~default:[] ~f:(fun { Auth.username; password } ->
+        [ "AUTH"; username; password ])
+    in
+    let%map.Deferred.Or_error (_ : Resp3.t String.Map.t) =
+      command_string t cmds (Response.create_string_map ())
     in
     t
+  ;;
+
+  let with_ ?on_disconnect ?auth ~where_to_connect f =
+    let%bind.Deferred.Or_error conn = create ?on_disconnect ?auth ~where_to_connect () in
+    Monitor.protect ~finally:(fun () -> close conn) (fun () -> f conn) |> Deferred.ok
+  ;;
+
+  let get_leader_address sentinel ~leader_name =
+    match%bind
+      command_string
+        sentinel
+        [ "SENTINEL"; "GET-MASTER-ADDR-BY-NAME"; leader_name ]
+        (Response.create_host_and_port ())
+    with
+    | Error e   -> Deferred.Or_error.fail e
+    | Ok leader ->
+      Tcp.Where_to_connect.of_host_and_port leader |> Deferred.Or_error.return
+  ;;
+
+  let is_leader conn =
+    match%bind.Deferred.Or_error
+      command_string conn [ "ROLE" ] (Response.create_role ())
+    with
+    | (Sentinel _ | Replica _) as role ->
+      Deferred.Or_error.error_s [%message "Not the leader" (role : Role.t)]
+    | Leader _ -> Deferred.Or_error.ok_unit
+  ;;
+
+  let create_using_sentinel
+        ?on_disconnect
+        ?sentinel_auth
+        ?auth
+        ~leader_name
+        ~where_to_connect
+        ()
+    =
+    (* Sentinel requires two connection steps:
+
+       1. Connect to the sentinel and ask for the leader address
+       2. Connect to the proposed leader and confirm that it is a leader
+
+       Read more here:
+       https://redis.io/docs/reference/sentinel-clients/#redis-service-discovery-via-sentinel
+
+       If all sentinels fail to connect or return a leader, then the client should return
+       an error. The leader node will disconnect from the client on failover, so the
+       client does not need to poll or listen to a subscription event to determine when to
+       disconnect from a stale leader. *)
+    Deferred.Or_error.find_map_ok where_to_connect ~f:(fun sentinel_addr ->
+      let%bind.Deferred.Or_error leader_addr =
+        with_ ~where_to_connect:sentinel_addr ?auth:sentinel_auth (fun sentinel_conn ->
+          get_leader_address sentinel_conn ~leader_name
+          |> Deferred.Or_error.tag_s
+               ~tag:
+                 [%message
+                   "Failed to determine leader"
+                     ~leader_name
+                     (sentinel_addr : [< Socket.Address.t ] Tcp.Where_to_connect.t)])
+        |> Deferred.Or_error.tag_s ~tag:[%message "Failed to connect to sentinel"]
+        |> Deferred.map ~f:Or_error.join
+      in
+      let%bind.Deferred.Or_error leader_conn =
+        create ?on_disconnect ?auth ~where_to_connect:leader_addr ()
+        |> Deferred.Or_error.tag_s
+             ~tag:
+               [%message
+                 "Failed to connect to leader"
+                   ~leader_name
+                   (leader_addr : Tcp.Where_to_connect.inet)
+                   (sentinel_addr : [< Socket.Address.t ] Tcp.Where_to_connect.t)]
+      in
+      match%bind is_leader leader_conn with
+      | Ok ()       -> Deferred.Or_error.return leader_conn
+      | Error error ->
+        let%bind () = close leader_conn in
+        Deferred.Or_error.fail
+          (Error.tag_s
+             error
+             ~tag:
+               [%message
+                 "Failed to verify leader"
+                   ~leader_name
+                   (leader_addr : Tcp.Where_to_connect.inet)
+                   (sentinel_addr : [< Socket.Address.t ] Tcp.Where_to_connect.t)]))
   ;;
 
   let client_tracking t ?(bcast = false) () =
@@ -469,7 +611,8 @@ struct
        To deal with this we listen for push messages of "subscribe" and ignore them. The
        receive loop continues and will treat the following message fragment as a normal
        in-band protocol message. This command expects the same number of responses of this
-       shape as channels specified to the command. *)
+       shape as channels specified to the command or an error, in which case it will
+       dequeue whatever other responses it may be expecting. *)
     let subscription_reader, subscription_writer = Pipe.create ()         in
     let subscriber = Subscriber { consume; writer = subscription_writer } in
     match
@@ -486,13 +629,23 @@ struct
         with_writer t (fun writer ->
           write_array_header writer (List.length channels + 1);
           write_array_el writer (module Bulk_io.String) command;
-          Deferred.Or_error.all_unit
-            (List.map new_channels ~f:(fun channel ->
-               let (module R) = Response.create_subscription ~channel in
-               Queue.enqueue t.pending_response (module R);
-               write_array_el writer (module Bulk_io.String) channel;
-               let%map.Deferred.Or_error _ = Ivar.read R.this in
-               Hashtbl.add_exn lookup ~key:channel ~data:[ subscriber ])))
+          List.map new_channels ~f:(fun channel ->
+            let r          = Response.create_subscription ~channel in
+            let (module R) = r                                     in
+            Queue.enqueue t.pending_response (module R);
+            write_array_el writer (module Bulk_io.String) channel;
+            channel, r)
+          |> List.fold ~init:Deferred.Or_error.ok_unit ~f:(fun acc (channel, r) ->
+            match%bind.Deferred acc with
+            | Error error ->
+              (* If there was an error, dequeue the next subscription request, as there will never be a response. *)
+              ignore
+                (Queue.dequeue_exn t.pending_response : (module Response_intf.S));
+              Deferred.Or_error.fail error
+            | Ok () ->
+              let (module R) = r in
+              let%map.Deferred.Or_error _ = Ivar.read R.this in
+              Hashtbl.add_exn lookup ~key:channel ~data:[ subscriber ]))
       in
       subscription_reader
   ;;
