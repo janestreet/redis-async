@@ -7,9 +7,17 @@
 open Core
 
 type t =
-  [ `del
+  [ `del (** DEL generates a del event for every deleted key. *)
   | `expire
-  | `new_
+  (** EXPIRE and all its variants (PEXPIRE, EXPIREAT, PEXPIREAT) generate an
+      expire event when called with a positive timeout (or a future
+      timestamp). Note that when these commands are called with a negative
+      timeout value or timestamp in the past, the key is deleted and only a del
+      event is generated instead. *)
+  | `new_ (** Every time a new key is added to the data set, a new event is generated. *)
+  | `expired
+    (** Every time a key with a time to live associated is removed from the data set
+        because it expired, an expired event is generated.  *)
   ]
 [@@deriving sexp_of]
 

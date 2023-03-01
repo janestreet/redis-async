@@ -76,8 +76,25 @@ let create_with_sock ?(args = []) ?connected () =
   where_to_connect, where_to_connect_inet
 ;;
 
+let reset_acl client =
+  let%bind () =
+    Redis_string.acl_setuser
+      client
+      ~username:"default"
+      ~rules:[ "reset"; "on"; "nopass"; "~*"; "&*"; "+@all" ]
+  in
+  let%bind users = Redis_string.acl_users client in
+  let users =
+    List.filter users ~f:(function
+      | "default" -> false
+      | _         -> true)
+  in
+  Redis_string.acl_deluser client users |> Deferred.Or_error.ignore_m
+;;
+
 let flush where_to_connect =
-  let%bind r = Redis_string.create ~where_to_connect () in
+  let%bind r  = Redis_string.create ~where_to_connect () in
+  let%bind () = reset_acl r                              in
   let%bind () =
     match%bind Redis_string.role r with
     | Sentinel _ | Replica _ -> return ()

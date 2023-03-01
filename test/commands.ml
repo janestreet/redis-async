@@ -40,7 +40,7 @@ let%expect_test "Roles" =
   Deferred.Or_error.ok_unit
 ;;
 
-let%expect_test "Strings" =
+let%expect_test ("Strings" [@tags "64-bits-only"]) =
   with_sandbox (fun r ->
     let%bind response = R.exists r [ "hello" ] in
     [%test_eq: int] response 0;
@@ -127,7 +127,28 @@ let%expect_test "Strings" =
     let%bind response = R.pexpire r "foo" Time_ns.Span.hour in
     print_s ([%sexp_of: [ `Set | `Not_set ]] response);
     [%expect {| Set |}];
+    let%bind response = R.pexpire r "foo" ~nx:true Time_ns.Span.hour in
+    print_s ([%sexp_of: [ `Set | `Not_set ]] response);
+    [%expect {| Not_set |}];
     let%bind response = R.pexpire r "key that was never set" Time_ns.Span.hour in
+    print_s ([%sexp_of: [ `Set | `Not_set ]] response);
+    [%expect {| Not_set |}];
+    let%bind response =
+      R.pexpireat r "foo" (Time_ns.add (Time_ns.now ()) Time_ns.Span.hour)
+    in
+    print_s ([%sexp_of: [ `Set | `Not_set ]] response);
+    [%expect {| Set |}];
+    let%bind response =
+      R.pexpireat r "foo" ~nx:true (Time_ns.add (Time_ns.now ()) Time_ns.Span.hour)
+    in
+    print_s ([%sexp_of: [ `Set | `Not_set ]] response);
+    [%expect {| Not_set |}];
+    let%bind response =
+      R.pexpireat
+        r
+        "key that was never set"
+        (Time_ns.add (Time_ns.now ()) Time_ns.Span.hour)
+    in
     print_s ([%sexp_of: [ `Set | `Not_set ]] response);
     [%expect {| Not_set |}];
     return ())
@@ -250,6 +271,10 @@ let%expect_test "sorted set commands" =
     [%test_eq: int] response 3;
     let%bind () = query_and_print_members key_1 in
     [%expect {| (c e f) |}];
+    let%bind response = R.zscore r key_1 "a" in
+    [%test_eq: [ `Score of float ] option] response None;
+    let%bind response = R.zscore r key_1 "c" in
+    [%test_eq: [ `Score of float ] option] response (Some (`Score 3.));
     let%bind response = R.raw_command r [ "echo"; "hello" ] in
     print_s ([%sexp_of: Resp3.t] response);
     [%expect {| (String hello) |}];
@@ -269,6 +294,10 @@ let%expect_test "hash commands" =
     (* HGET *)
     let%bind response = R.hget r key_1 "a" in
     [%test_eq: string option] response (Some "A");
+    let%bind response = R.hexists r key_1 "a" in
+    [%test_eq: bool] response true;
+    let%bind response = R.hexists r key_1 "bogus-key" in
+    [%test_eq: bool] response false;
     let%bind response = R.hget r key_1 "d" in
     [%test_eq: string option] response None;
     (* HMGET *)
@@ -495,13 +524,40 @@ let%expect_test "pub/sub" =
     return ())
 ;;
 
+let%expect_test "subscribing to the same channel twice at the same time works" =
+  with_sandbox (fun r ->
+    let%bind _s1 = R.subscribe r [ "foo" ]
+    and      _s2 = R.subscribe r [ "foo" ] in
+    return ())
+;;
+
+let%expect_test "subscribing to the duplicate channels in one invocation causes \
+                 duplicate data"
+  =
+  with_sandbox (fun r ->
+    let%bind s1        = R.subscribe r [ "foo"; "foo" ] in
+    let%bind (_ : int) = R.publish r "foo" "bar"        in
+    let%bind values =
+      match%bind.Deferred Pipe.read_exactly s1 ~num_values:2 with
+      | `Exactly queue -> Queue.to_list queue |> return
+      | (`Fewer _ | `Eof) as result ->
+        Deferred.Or_error.error_s
+          [%message
+            "Expected two values"
+              (result : [ `Fewer of (string * string) Queue.t | `Eof ])]
+    in
+    print_s [%message (values : (string * string) list)];
+    [%expect {| (values ((foo bar) (foo bar))) |}];
+    return ())
+;;
+
 let%expect_test "keyspace notifications" =
   with_sandbox (fun r ->
     (* The two readers intentionally have different event configurations. This exercies
        that event configuration is at the Redis instance level and notifications are
        broadcast (not per client), so it is possible to construct readers that will
        receive events that they did not request. Readers should drop such events. *)
-    let%bind keyevent_reader = R.keyevent_notifications r [ `del; `expire ]           in
+    let%bind keyevent_reader = R.keyevent_notifications r [ `del; `expire; `expired ] in
     let%bind keyspace_reader = R.keyspace_notifications r [ `del ] ~patterns:[ "f*" ] in
     let p () =
       print_s
@@ -517,12 +573,17 @@ let%expect_test "keyspace notifications" =
     let%bind _  = R.echo r "wait for a round trip"          in
     p ();
     [%expect {| ((keyevent (Ok ((del foo) (del bar)))) (keyspace (Ok ((del foo))))) |}];
-    let%bind          _  = R.set r "foo" "back again" ~expire:Time_ns.Span.millisecond in
-    let%bind.Deferred () = Clock_ns.after Time_ns.Span.millisecond                     in
-    (* get has a side effect of forcing expiry evaluation *)
-    let%bind          _  = R.get r "foo"                                               in
+    let%bind _ = R.set r "foo" "back again" ~expire:Time_ns.Span.millisecond in
+    let%bind _ = R.echo r "wait for a round trip"                            in
+    (* expire, and not expired, happens when expiry is set *)
     p ();
     [%expect {| ((keyevent (Ok ((expire foo)))) (keyspace Nothing_available)) |}];
+    let%bind.Deferred () = Clock_ns.after (Time_ns.Span.of_int_ms 10) in
+    (* get has a side effect of forcing expiry evaluation *)
+    let%bind          _  = R.get r "foo"                              in
+    let%bind          _  = R.echo r "wait for a round trip"           in
+    p ();
+    [%expect {| ((keyevent (Ok ((expired foo)))) (keyspace Nothing_available)) |}];
     return ())
 ;;
 

@@ -43,6 +43,10 @@ struct
     command_string t [ "KEYS"; pattern ] (Response.create Key_parser.list)
   ;;
 
+  let rename t k ~new_key =
+    command_key t [ "RENAME" ] [ k; new_key ] (Response.create_ok ())
+  ;;
+
   let scan t ~cursor ?count ?pattern () =
     let count =
       match count with
@@ -71,13 +75,29 @@ struct
 
   let setnx t k v = command_kv t [ "SETNX" ] [ k, v ] [] (Response.create_01_bool ())
 
-  let pexpire t key span =
+  let pexpire t key ?(nx = false) span =
+    let nx = if nx then [ "NX" ] else [] in
     match%map
       command_keys_string_args
         t
         [ "PEXPIRE" ]
         [ key ]
-        [ Int.to_string (Time_ns.Span.to_int_ms span) ]
+        (Int.to_string (Time_ns.Span.to_int_ms span) :: nx)
+        (Response.create_int ())
+    with
+    | 1 -> `Set
+    | 0 -> `Not_set
+    | n -> raise_s [%message [%here] "Unexpected response" (n : int)]
+  ;;
+
+  let pexpireat t key ?(nx = false) time =
+    let nx = if nx then [ "NX" ] else [] in
+    match%map
+      command_keys_string_args
+        t
+        [ "PEXPIREAT" ]
+        [ key ]
+        (Int.to_string (Time_ns.to_span_since_epoch time |> Time_ns.Span.to_int_ms) :: nx)
         (Response.create_int ())
     with
     | 1 -> `Set
@@ -177,6 +197,13 @@ struct
       (Response.create Value_parser.list)
   ;;
 
+  let zscore t k v =
+    let%map score =
+      command_keys_values t [ "ZSCORE" ] [ k ] [ v ] (Response.create_float_option ())
+    in
+    Option.map score ~f:(fun score -> `Score score)
+  ;;
+
   let zrem t key values =
     command_keys_values t [ "ZREM" ] [ key ] values (Response.create_int ())
   ;;
@@ -201,6 +228,16 @@ struct
       (Response.create Value_parser.list)
   ;;
 
+  let zremrangebyscore t key ~min_score ~max_score =
+    command_key_score_range
+      t
+      [ "ZREMRANGEBYSCORE" ]
+      key
+      ~min_score
+      ~max_score
+      (Response.create_int ())
+  ;;
+
   let hset t k fvs =
     command_keys_fields_and_values
       t
@@ -223,6 +260,10 @@ struct
       [ k ]
       fs
       (Response.create Value_parser.list_opt)
+  ;;
+
+  let hexists t k f =
+    command_keys_fields t [ "HEXISTS" ] [ k ] [ f ] (Response.create_01_bool ())
   ;;
 
   let hgetall t k =
@@ -261,9 +302,10 @@ struct
   ;;
 
   let keyevent_configuration : Key_event.t -> char = function
-    | `del    -> 'g'
-    | `expire -> 'x'
-    | `new_   -> 'n'
+    | `del     -> 'g'
+    | `expire  -> 'g'
+    | `new_    -> 'n'
+    | `expired -> 'x'
   ;;
 
   let keyspace_setup t category events =
@@ -386,6 +428,19 @@ struct
 
   let acl_setuser t ~username ~rules =
     command_string t ([ "ACL"; "SETUSER"; username ] @ rules) (Response.create_ok ())
+  ;;
+
+  let acl_deluser t = function
+    | []        -> return 0
+    | usernames ->
+      command_string t ("ACL" :: "DELUSER" :: usernames) (Response.create_int ())
+  ;;
+
+  let acl_users t = command_string t [ "ACL"; "USERS" ] (Response.create_string_list ())
+  let acl_list  t = command_string t [ "ACL"; "LIST"  ] (Response.create_string_list ())
+
+  let acl_getuser t ~username =
+    command_string t [ "ACL"; "GETUSER"; username ] (Response.create_resp3 ())
   ;;
 
   let raw_command t commands = command_string t commands (Response.create_resp3 ())

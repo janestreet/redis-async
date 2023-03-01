@@ -36,7 +36,9 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> unit
     -> Key.t t Deferred.Or_error.t
 
-  val close : Key.t t -> unit Deferred.t
+  val close             : Key.t t -> unit Deferred.t
+  val close_finished    : Key.t t -> unit Deferred.t
+  val has_close_started : Key.t t -> bool
 
   (** Send a command built from strings to Redis and expect a Response of the specified
       kind.

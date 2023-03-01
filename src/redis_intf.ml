@@ -38,22 +38,25 @@ module type S = sig
     -> unit
     -> t Deferred.Or_error.t
 
-  val close    : t -> unit Deferred.t
+  val close : t -> unit Deferred.t
+  val close_finished : t -> unit Deferred.t
+  val has_close_started : t -> bool
 
   (** Redis commands are documented at: https://redis.io/commands *)
 
-  val select   : t -> int -> unit Deferred.Or_error.t
+  val select : t -> int -> unit Deferred.Or_error.t
   val flushall : t -> unit Deferred.Or_error.t
-  val flushdb  : t -> unit Deferred.Or_error.t
+  val flushdb : t -> unit Deferred.Or_error.t
   val shutdown : t -> unit Deferred.Or_error.t
-  val echo     : t -> Key.t -> Key.t Deferred.Or_error.t
-  val ping     : t -> string -> string Deferred.Or_error.t
-  val incr     : t -> Key.t -> int Deferred.Or_error.t
-  val del      : t -> Key.t list -> int Deferred.Or_error.t
-  val unlink   : t -> Key.t list -> int Deferred.Or_error.t
-  val dbsize   : t -> int Deferred.Or_error.t
-  val exists   : t -> Key.t list -> int Deferred.Or_error.t
-  val keys     : ?pattern:string (** defaults to '*' *) -> t -> Key.t list Deferred.Or_error.t
+  val echo : t -> Key.t -> Key.t Deferred.Or_error.t
+  val ping : t -> string -> string Deferred.Or_error.t
+  val incr : t -> Key.t -> int Deferred.Or_error.t
+  val del : t -> Key.t list -> int Deferred.Or_error.t
+  val unlink : t -> Key.t list -> int Deferred.Or_error.t
+  val dbsize : t -> int Deferred.Or_error.t
+  val exists : t -> Key.t list -> int Deferred.Or_error.t
+  val keys : ?pattern:string (** defaults to '*' *) -> t -> Key.t list Deferred.Or_error.t
+  val rename : t -> Key.t -> new_key:Key.t -> unit Deferred.Or_error.t
 
   val scan
     :  t
@@ -100,7 +103,19 @@ module type S = sig
     -> Key.t
     -> [ `Timeout of Time_ns.Span.t | `No_timeout | `No_key ] Deferred.Or_error.t
 
-  val pexpire : t -> Key.t -> Time_ns.Span.t -> [ `Set | `Not_set ] Deferred.Or_error.t
+  val pexpire
+    :  t
+    -> Key.t
+    -> ?nx:bool
+    -> Time_ns.Span.t
+    -> [ `Set | `Not_set ] Deferred.Or_error.t
+
+  val pexpireat
+    :  t
+    -> Key.t
+    -> ?nx:bool
+    -> Time_ns.t
+    -> [ `Set | `Not_set ] Deferred.Or_error.t
 
   val zrange
     :  t
@@ -108,6 +123,8 @@ module type S = sig
     -> min_index:int
     -> max_index:int
     -> Value.t list Deferred.Or_error.t
+
+  val zscore : t -> Key.t -> Value.t -> [ `Score of float ] option Deferred.Or_error.t
 
   val zrangebylex
     :  t
@@ -123,13 +140,21 @@ module type S = sig
     -> max_score:float Maybe_bound.t
     -> Value.t list Deferred.Or_error.t
 
-  val hset    : t -> Key.t -> (Field.t * Value.t) list -> int     Deferred.Or_error.t
-  val hget    : t -> Key.t -> Field.t -> Value.t option           Deferred.Or_error.t
+  val zremrangebyscore
+    :  t
+    -> Key.t
+    -> min_score:float Maybe_bound.t
+    -> max_score:float Maybe_bound.t
+    -> int Deferred.Or_error.t
+
+  val hexists : t -> Key.t -> Field.t -> bool Deferred.Or_error.t
+  val hset    : t -> Key.t -> (Field.t * Value.t) list -> int Deferred.Or_error.t
+  val hget    : t -> Key.t -> Field.t -> Value.t option Deferred.Or_error.t
   val hmget   : t -> Key.t -> Field.t list -> Value.t option list Deferred.Or_error.t
-  val hgetall : t -> Key.t -> (Field.t * Value.t) list            Deferred.Or_error.t
-  val hvals   : t -> Key.t -> Value.t list                        Deferred.Or_error.t
-  val hkeys   : t -> Key.t -> Field.t list                        Deferred.Or_error.t
-  val hdel    : t -> Key.t -> Field.t list -> int                 Deferred.Or_error.t
+  val hgetall : t -> Key.t -> (Field.t * Value.t) list Deferred.Or_error.t
+  val hvals   : t -> Key.t -> Value.t list Deferred.Or_error.t
+  val hkeys   : t -> Key.t -> Field.t list Deferred.Or_error.t
+  val hdel    : t -> Key.t -> Field.t list -> int Deferred.Or_error.t
 
   val hscan
     :  t
@@ -166,6 +191,7 @@ module type S = sig
   val version     : t -> string Deferred.Or_error.t
   val role        : t -> Role.t Deferred.Or_error.t
 
+
   (** ACL and authentication commands.
 
       Read here for more:
@@ -175,8 +201,11 @@ module type S = sig
   *)
   val acl_setuser : t -> username:string -> rules:string list -> unit Deferred.Or_error.t
 
-
-  val auth        : t -> auth:Auth.t     -> unit              -> unit Deferred.Or_error.t
+  val acl_deluser : t -> string list -> int                           Deferred.Or_error.t
+  val acl_users   : t -> string list                                  Deferred.Or_error.t
+  val acl_list    : t -> string list                                  Deferred.Or_error.t
+  val acl_getuser : t -> username:string -> Resp3.t                   Deferred.Or_error.t
+  val auth        : t -> auth:Auth.t -> unit -> unit                  Deferred.Or_error.t
 
   (** Sentinel specific commands. These will fail if not directly connected to a sentinel.
 

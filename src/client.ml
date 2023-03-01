@@ -459,6 +459,13 @@ struct
           Pipe.close writer))
   ;;
 
+  let close_finished t =
+    let%bind () = Writer.close_finished t.writer in
+    Reader.close_finished t.reader
+  ;;
+
+  let has_close_started t = Writer.is_closed t.writer || Reader.is_closed t.reader
+
   let create ?on_disconnect ?auth ~where_to_connect () =
     let%bind.Deferred.Or_error _socket, reader, writer =
       (* Tcp.connect will raise if the connection attempt times out, but we'd prefer to
@@ -630,12 +637,21 @@ struct
           write_array_header writer (List.length channels + 1);
           write_array_el writer (module Bulk_io.String) command;
           List.map new_channels ~f:(fun channel ->
-            let r          = Response.create_subscription ~channel in
-            let (module R) = r                                     in
+            let r =
+              Response.create_subscription ~channel ~on_success:(fun () ->
+                (* Subscriber registration must be added synchronously and immediately
+                   after a subscription succeeds, as opposed to waiting for the Response
+                   to be determined. This is necessary because the receive loop processes
+                   a buffer without yielding that may contain multiple messages, and a
+                   message destined for a new subscriber could be within that buffer
+                   following the subscription success. *)
+                Hashtbl.add_multi lookup ~key:channel ~data:subscriber)
+            in
+            let (module R) = r in
             Queue.enqueue t.pending_response (module R);
             write_array_el writer (module Bulk_io.String) channel;
             channel, r)
-          |> List.fold ~init:Deferred.Or_error.ok_unit ~f:(fun acc (channel, r) ->
+          |> List.fold ~init:Deferred.Or_error.ok_unit ~f:(fun acc (_channel, r) ->
             match%bind.Deferred acc with
             | Error error ->
               (* If there was an error, dequeue the next subscription request, as there will never be a response. *)
@@ -645,7 +661,7 @@ struct
             | Ok () ->
               let (module R) = r in
               let%map.Deferred.Or_error _ = Ivar.read R.this in
-              Hashtbl.add_exn lookup ~key:channel ~data:[ subscriber ]))
+              ()))
       in
       subscription_reader
   ;;

@@ -31,6 +31,14 @@ let create_int () =
     | other -> handle_unexpected_response ~expected:"int" other)
 ;;
 
+let create_float_option () =
+  create (fun buf ->
+    match Resp3.parse_exn buf with
+    | Null     -> Ok None
+    | Double d -> Ok (Some d)
+    | other    -> handle_unexpected_response ~expected:"double" other)
+;;
+
 let create_resp3 () = create (fun buf -> Ok (Resp3.parse_exn buf))
 
 let parse_01_bool = function
@@ -54,13 +62,15 @@ let create_01_bool_list () =
     | other -> handle_unexpected_response ~expected:"bool list" other)
 ;;
 
-let create_subscription ~channel =
+let create_subscription ~channel ~on_success =
   create (fun buf ->
     let expected = "subscription" in
     match Resp3.parse_exn buf with
     | String s when String.(s = channel) ->
       (match Resp3.parse_exn buf with
-       | Int i -> Ok i
+       | Int i ->
+         on_success ();
+         Ok i
        | other -> handle_unexpected_response ~expected other)
     | other -> handle_unexpected_response ~expected other)
 ;;
@@ -70,6 +80,19 @@ let create_string () =
     match Resp3.parse_exn buf with
     | String s -> Ok s
     | other    -> handle_unexpected_response ~expected:"string" other)
+;;
+
+let create_string_list () =
+  create (fun buf ->
+    match Resp3.parse_exn buf with
+    | Array array ->
+      let%map.Or_error result =
+        Array.fold_result array ~init:[] ~f:(fun acc -> function
+          | String str -> Ok (str :: acc)
+          | other      -> handle_unexpected_response ~expected:"string list" other)
+      in
+      List.rev result
+    | other -> handle_unexpected_response ~expected:"string list" other)
 ;;
 
 let create_host_and_port () =
