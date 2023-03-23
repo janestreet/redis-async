@@ -156,15 +156,11 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
 
 let%expect_test "Command: keys" =
   with_sandbox (fun r ->
-    let%bind () =
-      R.mset r [ "a", "b"; "c", "d"; "e", "f"; "foo", "g"; "foobar", "h" ]
-    in
-    let%bind response = R.keys r >>| List.sort ~compare:String.compare in
+    let%bind () = R.mset r [ "a", "b"; "c", "d"; "e", "f"; "foo", "g"; "foobar", "h" ] in
+    let%bind response = R.keys r >>| List.sort ~compare:String.compare                 in
     print_s ([%sexp_of: string list] response);
     [%expect {| (a c e foo foobar) |}];
-    let%bind response =
-      R.keys r ~pattern:"foo*" >>| List.sort ~compare:String.compare
-    in
+    let%bind response = R.keys r ~pattern:"foo*" >>| List.sort ~compare:String.compare in
     print_s ([%sexp_of: string list] response);
     [%expect {| (foo foobar) |}];
     return ())

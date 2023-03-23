@@ -655,8 +655,7 @@ struct
             match%bind.Deferred acc with
             | Error error ->
               (* If there was an error, dequeue the next subscription request, as there will never be a response. *)
-              ignore
-                (Queue.dequeue_exn t.pending_response : (module Response_intf.S));
+              ignore (Queue.dequeue_exn t.pending_response : (module Response_intf.S));
               Deferred.Or_error.fail error
             | Ok () ->
               let (module R) = r in
