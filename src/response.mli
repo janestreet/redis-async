@@ -37,8 +37,14 @@ val create_01_bool      : unit -> (module Response_intf.S with type t = bool)
 val create_01_bool_list : unit -> (module Response_intf.S with type t = bool list)
 
 (** Create a response that expects a specific string followed by a number, which is part
-    of the response to a SUBSCRIBE command *)
+    of the response to a [P]SUBSCRIBE command *)
 val create_subscription
+  :  channel:string
+  -> on_success:(unit -> unit)
+  -> (module Response_intf.S with type t = int)
+
+(** Same as [create_subscription], except in response to a [P]UNSUBSCRIBE command. *)
+val create_unsubscription
   :  channel:string
   -> on_success:(unit -> unit)
   -> (module Response_intf.S with type t = int)

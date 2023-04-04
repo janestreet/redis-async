@@ -270,8 +270,9 @@ struct
     command_key t [ "HGETALL" ] [ k ] (Response.create Field_value_map_parser.map)
   ;;
 
-  let hkeys t k = command_key t [ "HKEYS" ] [ k ] (Response.create Field_parser.list)
-  let hvals t k = command_key t [ "HVALS" ] [ k ] (Response.create Value_parser.list)
+  let hkeys t k = command_key t [ "HKEYS" ] [ k ] (Response.create     Field_parser.list)
+  let hlen  t k = command_key t [ "HLEN"  ] [ k ] (Response.create_int ()               )
+  let hvals t k = command_key t [ "HVALS" ] [ k ] (Response.create     Value_parser.list)
 
   let hdel t k fs =
     command_keys_fields
@@ -306,6 +307,8 @@ struct
     | `expire  -> 'g'
     | `new_    -> 'n'
     | `expired -> 'x'
+    | `set     -> '$'
+    | `hset    -> 'h'
   ;;
 
   let keyspace_setup t category events =
@@ -363,23 +366,35 @@ struct
     map_events_in_reader reader lookup
   ;;
 
-  let keyspace_notifications t events ~patterns =
+  let keyspace_notifications t events targets =
+    let keyspace_prefix        = "__keyspace@0__:" in
+    let keyspace_prefix_length = 15                in
     let%bind lookup = keyspace_setup t 'K' events in
+    let targets =
+      match targets with
+      | `Patterns patterns ->
+        `Pattern (List.map patterns ~f:(fun pattern -> keyspace_prefix ^ pattern))
+      | `Keys keys ->
+        `Literal
+          (List.map keys ~f:(fun key -> keyspace_prefix ^ Key.Redis_bulk_io.to_string key))
+    in
     let%map reader =
-      subscribe_raw
-        t
-        (`Pattern (List.map patterns ~f:(fun pattern -> "__keyspace@0__:" ^ pattern)))
-        ~consume:(fun buf ~subscription:_ ->
-          let key =
+      subscribe_raw t targets ~consume:(fun buf ~subscription ->
+        let key =
+          match targets with
+          | `Pattern _ ->
             Parse_bulk.apply_single buf ~f:(fun ~len buf ->
-              Common.check_length_exn buf ~len:15;
-              Iobuf.unsafe_advance buf 15;
-              Key.Redis_bulk_io.consume buf ~len:(len - 15))
+              Common.check_length_exn buf ~len:keyspace_prefix_length;
+              Iobuf.unsafe_advance buf keyspace_prefix_length;
+              Key.Redis_bulk_io.consume buf ~len:(len - keyspace_prefix_length))
             |> Or_error.ok_exn
-          in
-          Resp3.expect_char buf '$';
-          let raw_event = Resp3.blob_string buf in
-          raw_event, key)
+          | `Literal _ ->
+            Key.Redis_bulk_io.of_string
+              (String.drop_prefix subscription keyspace_prefix_length)
+        in
+        Resp3.expect_char buf '$';
+        let raw_event = Resp3.blob_string buf in
+        raw_event, key)
     in
     map_events_in_reader reader lookup
   ;;

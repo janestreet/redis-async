@@ -147,14 +147,15 @@ module type S = sig
     -> max_score:float Maybe_bound.t
     -> int Deferred.Or_error.t
 
-  val hexists : t -> Key.t -> Field.t -> bool Deferred.Or_error.t
-  val hset    : t -> Key.t -> (Field.t * Value.t) list -> int Deferred.Or_error.t
-  val hget    : t -> Key.t -> Field.t -> Value.t option Deferred.Or_error.t
+  val hexists : t -> Key.t -> Field.t -> bool                     Deferred.Or_error.t
+  val hset    : t -> Key.t -> (Field.t * Value.t) list -> int     Deferred.Or_error.t
+  val hget    : t -> Key.t -> Field.t -> Value.t option           Deferred.Or_error.t
   val hmget   : t -> Key.t -> Field.t list -> Value.t option list Deferred.Or_error.t
-  val hgetall : t -> Key.t -> (Field.t * Value.t) list Deferred.Or_error.t
-  val hvals   : t -> Key.t -> Value.t list Deferred.Or_error.t
-  val hkeys   : t -> Key.t -> Field.t list Deferred.Or_error.t
-  val hdel    : t -> Key.t -> Field.t list -> int Deferred.Or_error.t
+  val hgetall : t -> Key.t -> (Field.t * Value.t) list            Deferred.Or_error.t
+  val hvals   : t -> Key.t -> Value.t list                        Deferred.Or_error.t
+  val hkeys   : t -> Key.t -> Field.t list                        Deferred.Or_error.t
+  val hlen    : t -> Key.t -> int                                 Deferred.Or_error.t
+  val hdel    : t -> Key.t -> Field.t list -> int                 Deferred.Or_error.t
 
   val hscan
     :  t
@@ -171,7 +172,7 @@ module type S = sig
   val keyspace_notifications
     :  t
     -> ([< Key_event.t ] as 'a) list
-    -> patterns:string list
+    -> [ `Patterns of string list | `Keys of Key.t list ]
     -> ('a * Key.t) Pipe.Reader.t Deferred.Or_error.t
 
   val publish   : t -> string -> Key.t -> int Deferred.Or_error.t

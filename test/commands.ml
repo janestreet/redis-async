@@ -527,6 +527,97 @@ let%expect_test "subscribing to the same channel twice at the same time works" =
     return ())
 ;;
 
+let get_subscriptions r =
+  let%map subscriptions = R.raw_command r [ "PUBSUB"; "CHANNELS" ] in
+  match subscriptions with
+  | Array array ->
+    Array.map array ~f:(function
+      | String str -> str
+      | resp3      -> raise_s [%message "Unexpected resp3 channel" (resp3 : Resp3.t)])
+    |> String.Set.of_array
+  | resp3 -> raise_s [%message "Unexpected resp3 response" (resp3 : Resp3.t)]
+;;
+
+let%expect_test "unsubscribing works" =
+  with_sandbox (fun r ->
+    let%bind subscription  = R.subscribe       r [ "foo" ] in
+    let%bind subscriptions = get_subscriptions r           in
+    print_s [%sexp (subscriptions : String.Set.t)];
+    [%expect {| (__sentinel__:hello foo) |}];
+    Pipe.close_read subscription;
+    let%bind.Deferred ()            = Scheduler.yield_until_no_jobs_remain () in
+    let%bind          _             = R.ping r "foo"                          in
+    let%bind          subscriptions = get_subscriptions r                     in
+    print_s [%sexp (subscriptions : String.Set.t)];
+    [%expect {| (__sentinel__:hello) |}];
+    return ())
+;;
+
+let%expect_test "don't unsubscribe if another subscription is active" =
+  with_sandbox (fun r ->
+    let%bind subscription        = R.subscribe r [ "foo" ] in
+    let%bind active_subscription = R.subscribe r [ "foo" ] in
+    let%bind subscriptions       = get_subscriptions r     in
+    print_s [%sexp (subscriptions : String.Set.t)];
+    [%expect {| (__sentinel__:hello foo) |}];
+    Pipe.close_read subscription;
+    let%bind.Deferred ()            = Scheduler.yield_until_no_jobs_remain () in
+    let%bind          _             = R.ping r "foo"                          in
+    let%bind          subscriptions = get_subscriptions r                     in
+    print_s [%sexp (subscriptions : String.Set.t)];
+    [%expect {| (__sentinel__:hello foo) |}];
+    Pipe.close_read active_subscription;
+    let%bind.Deferred ()            = Scheduler.yield_until_no_jobs_remain () in
+    let%bind          _             = R.ping r "foo"                          in
+    let%bind          subscriptions = get_subscriptions r                     in
+    print_s [%sexp (subscriptions : String.Set.t)];
+    [%expect {| (__sentinel__:hello) |}];
+    return ())
+;;
+
+let%expect_test "an unsubscribe and a resubscribe should maintain the subscription" =
+  with_sandbox (fun r ->
+    let%bind subscription  = R.subscribe       r [ "foo" ] in
+    let%bind subscriptions = get_subscriptions r           in
+    print_s [%sexp (subscriptions : String.Set.t)];
+    [%expect {| (__sentinel__:hello foo) |}];
+    Pipe.close_read subscription;
+    (* We do a plain yield here in case there's a race condition around
+       the unsubscription getting initiated but not finished before
+       the second subscription occurs.
+    *)
+    let%bind.Deferred ()            = Scheduler.yield ()      in
+    let%bind          _s            = R.subscribe r [ "foo" ] in
+    let%bind          subscriptions = get_subscriptions r     in
+    print_s [%sexp (subscriptions : String.Set.t)];
+    [%expect {| (__sentinel__:hello foo) |}];
+    return ())
+;;
+
+let get_number_of_pattern_subscriptions r =
+  match%map R.raw_command r [ "PUBSUB"; "NUMPAT" ] with
+  | Int n -> n
+  | resp3 -> raise_s [%message "Unexpected resp3" (resp3 : Resp3.t)]
+;;
+
+let%expect_test "punsubscribing works" =
+  with_sandbox (fun r ->
+    let%bind n = get_number_of_pattern_subscriptions r in
+    print_s [%sexp (n : int)];
+    [%expect {| 0 |}];
+    let%bind subscription = R.psubscribe r [ "foo" ]              in
+    let%bind n            = get_number_of_pattern_subscriptions r in
+    print_s [%sexp (n : int)];
+    [%expect {| 1 |}];
+    Pipe.close_read subscription;
+    let%bind.Deferred () = Scheduler.yield_until_no_jobs_remain () in
+    let%bind          _  = R.ping r "foo"                          in
+    let%bind          n  = get_number_of_pattern_subscriptions r   in
+    print_s [%sexp (n : int)];
+    [%expect {| 0 |}];
+    return ())
+;;
+
 let%expect_test "subscribing to the duplicate channels in one invocation causes \
                  duplicate data"
   =
@@ -553,8 +644,10 @@ let%expect_test "keyspace notifications" =
        that event configuration is at the Redis instance level and notifications are
        broadcast (not per client), so it is possible to construct readers that will
        receive events that they did not request. Readers should drop such events. *)
-    let%bind keyevent_reader = R.keyevent_notifications r [ `del; `expire; `expired ] in
-    let%bind keyspace_reader = R.keyspace_notifications r [ `del ] ~patterns:[ "f*" ] in
+    let%bind keyevent_reader =
+      R.keyevent_notifications r [ `del; `expire; `expired; `hset ]
+    in
+    let%bind keyspace_reader = R.keyspace_notifications r [ `del ] (`Patterns [ "f*" ]) in
     let p () =
       print_s
         [%message
@@ -580,6 +673,29 @@ let%expect_test "keyspace notifications" =
     let%bind          _  = R.echo r "wait for a round trip"           in
     p ();
     [%expect {| ((keyevent (Ok ((expired foo)))) (keyspace Nothing_available)) |}];
+    let%bind _ = R.hset r "foo" [ "a", "a" ]      in
+    let%bind _ = R.echo r "wait for a round trip" in
+    p ();
+    [%expect {| ((keyevent (Ok ((hset foo)))) (keyspace Nothing_available)) |}];
+    return ())
+;;
+
+let%expect_test "keyspace notifications with specific keys" =
+  with_sandbox (fun r ->
+    let%bind keyspace_reader =
+      R.keyspace_notifications r [ `set ] (`Keys [ "f*"; "bar" ])
+    in
+    let p () =
+      print_s
+        [%message
+          "" ~keyspace:(Pipe.read_now' keyspace_reader : Key_event.t Subscription_data.t)]
+    in
+    p ();
+    [%expect {| (keyspace Nothing_available) |}];
+    let%bind () = R.mset r [ "f*", "hey"; "foo", "bar"; "bar", "baz" ] in
+    let%bind _  = R.echo r "wait for a round trip"                     in
+    p ();
+    [%expect {| (keyspace (Ok ((set f*) (set bar)))) |}];
     return ())
 ;;
 

@@ -15,5 +15,7 @@ module type S = sig
     val length  : t -> int
     val consume : len:int -> ([> read ], Iobuf.seek) Iobuf.t -> t Or_error.t
     val write   : len:int -> Writer.t -> t -> unit
+
+    include Stringable.S with type t := t
   end
 end

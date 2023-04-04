@@ -16,8 +16,11 @@ type t =
       event is generated instead. *)
   | `new_ (** Every time a new key is added to the data set, a new event is generated. *)
   | `expired
-    (** Every time a key with a time to live associated is removed from the data set
-        because it expired, an expired event is generated.  *)
+  (** Every time a key with a time to live associated is removed from the data set
+      because it expired, an expired event is generated.  *)
+  | `set
+  (** Every time set, setex, setnx, or getset is called, a set event is generated. *)
+  | `hset (** Every time hset, hsetnx, or hmset is called, an hset event is generated. *)
   ]
 [@@deriving sexp_of]
 

@@ -26,6 +26,9 @@ module Make_binable (T : Binable.S) = struct
     let write ~len writer t =
       Writer.write_bin_prot_no_size_header writer ~size:len T.bin_write_t t
     ;;
+
+    let to_string t = Binable.to_string (module T) t
+    let of_string t = Binable.of_string (module T) t
   end
 end
 
@@ -42,6 +45,8 @@ module Make_stringable (T : Stringable.S) = struct
     ;;
 
     let write ~len writer t = Writer.write writer ~len (T.to_string t)
+    let to_string           = T.to_string
+    let of_string           = T.of_string
   end
 end
 

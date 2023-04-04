@@ -13,13 +13,22 @@ type subscriber =
       }
       -> subscriber
 
+(** This is a table from pub/sub channel to a list of subscribers. Each channel can have
+    multiple subscribers, but that is represented by a single redis subscription that is
+    fanned out.
+
+    If the list of subscribers for a channel is empty, that means we issued an unsubscribe
+    command to redis.
+*)
+type subscription_table = subscriber list String.Table.t
+
 type 'a t =
   { pending_response      : (module Response_intf.S) Queue.t
   ; reader                : Reader.t
   ; writer                : Writer.t
   ; mutable invalidations : [ `All | `Key of 'a ] Pipe.Writer.t list
-  ; subscriptions         : subscriber list String.Table.t
-  ; pattern_subscriptions : subscriber list String.Table.t
+  ; subscriptions         : subscription_table
+  ; pattern_subscriptions : subscription_table
   }
 
 module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_intf.S) =
@@ -345,8 +354,7 @@ struct
       List.iteri writers ~f:(fun i (Subscriber { writer; consume }) ->
         if i <> 0 then Iobuf.Expert.set_lo buf lo;
         let payload = consume (buf :> (read, Iobuf.seek) Iobuf.t) ~subscription in
-        Pipe.write_without_pushback_if_open writer payload;
-        ())
+        Pipe.write_without_pushback_if_open writer payload)
   ;;
 
   (** Read RESP3 out-of-band push messages *)
@@ -376,12 +384,12 @@ struct
          raise
            (Resp3.Protocol_error
               (sprintf "Expected an invalidation message but observed '%c'" unexpected)))
-    | 3, "subscribe" | 3, "psubscribe" ->
+    | 3, ("subscribe" | "psubscribe" | "unsubscribe" | "punsubscribe") ->
       (* Intentionally ignored, see comments for the [subscribe] command *)
       ()
-    | 3  , "message"                   -> handle_message t.subscriptions buf
-    | 4  , "pmessage"                  -> handle_message t.pattern_subscriptions buf
-    | len, _                           ->
+    | 3  , "message"  -> handle_message t.subscriptions buf
+    | 4  , "pmessage" -> handle_message t.pattern_subscriptions buf
+    | len, _          ->
       raise_s
         [%message
           "Received a PUSH message type which is not implemented"
@@ -610,7 +618,55 @@ struct
     reader
   ;;
 
-  let subscribe_impl t channels ~command ~lookup ~consume =
+  let add_subscriber
+        t
+        (lookup : subscription_table)
+        ~unsubscribe_command
+        (Subscriber { writer; _ } as subscriber)
+        ~channel
+    =
+    Hashtbl.add_multi lookup ~key:channel ~data:subscriber;
+    don't_wait_for
+    @@
+    let%bind () = Pipe.closed writer in
+    (* We know for a fact that [Hashtbl.find lookup channel] exists and has
+       this entry because the only way that entry would be removed is if the
+       list is empty, and that list is only empty if all subscribers have been
+       removed. The only code that removes this subscriber is the one below.
+    *)
+    let remaining_subscribers =
+      Hashtbl.update_and_return lookup channel ~f:(function
+        | None ->
+          raise_s
+            [%message
+              "BUG: [Redis.Client.add_subscriber] could not find entry for channel in \
+               the subscription table when cleaning up a closed subscriber"
+                (channel : string)]
+        | Some subscribers ->
+          List.filter subscribers ~f:(fun subscriber_in_list ->
+            not (phys_equal subscriber_in_list subscriber)))
+    in
+    if List.is_empty remaining_subscribers
+    then
+      Deferred.ignore_m
+        (* Ignore the return value because:
+           - A failure probably means the connection was closed
+           - There's nothing we can do about an unsubscription failure in the first place
+        *)
+        (with_writer t (fun writer ->
+           write_array_header writer 2;
+           write_array_el writer (module Bulk_io.String) unsubscribe_command;
+           let (module R) =
+             Response.create_unsubscription ~channel ~on_success:(fun () ->
+               Hashtbl.remove lookup channel)
+           in
+           Queue.enqueue t.pending_response (module R);
+           write_array_el writer (module Bulk_io.String) channel;
+           Ivar.read R.this))
+    else return ()
+  ;;
+
+  let subscribe_impl t channels ~command ~unsubscribe_command ~lookup ~consume =
     (* Subscription command replies are unusual: Redis will respond using a separate push
        message for each channel subscribed to, but unlike normal push messages, each is
        expected to be in pipelined sequence like a normal command.
@@ -624,11 +680,13 @@ struct
     let subscriber = Subscriber { consume; writer = subscription_writer } in
     match
       List.filter channels ~f:(fun channel ->
-        match Hashtbl.mem lookup channel with
-        | true  ->
-          Hashtbl.add_multi lookup ~key:channel ~data:subscriber;
+        match Hashtbl.find_multi lookup channel with
+        | _ :: _ ->
+          (* If the list is ever empty, then we know for a fact that an unsubscribe
+             has been issued or we have never subscribed, so we have to resubscribe. *)
+          add_subscriber t lookup subscriber ~unsubscribe_command ~channel;
           false
-        | false -> true)
+        | [] -> true)
     with
     | [] -> Deferred.Or_error.return subscription_reader
     | new_channels ->
@@ -645,7 +703,7 @@ struct
                    a buffer without yielding that may contain multiple messages, and a
                    message destined for a new subscriber could be within that buffer
                    following the subscription success. *)
-                Hashtbl.add_multi lookup ~key:channel ~data:subscriber)
+                add_subscriber t lookup subscriber ~unsubscribe_command ~channel)
             in
             let (module R) = r in
             Queue.enqueue t.pending_response (module R);
@@ -667,8 +725,18 @@ struct
 
   let subscribe_raw t = function
     | `Literal subscriptions ->
-      subscribe_impl t subscriptions ~command:"SUBSCRIBE" ~lookup:t.subscriptions
+      subscribe_impl
+        t
+        subscriptions
+        ~command:"SUBSCRIBE"
+        ~unsubscribe_command:"UNSUBSCRIBE"
+        ~lookup:t.subscriptions
     | `Pattern subscriptions ->
-      subscribe_impl t subscriptions ~command:"PSUBSCRIBE" ~lookup:t.pattern_subscriptions
+      subscribe_impl
+        t
+        subscriptions
+        ~command:"PSUBSCRIBE"
+        ~unsubscribe_command:"PUNSUBSCRIBE"
+        ~lookup:t.pattern_subscriptions
   ;;
 end

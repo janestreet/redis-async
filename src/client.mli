@@ -169,6 +169,9 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> unit
     -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
 
+  (** Returns a pipe reader for a subscription. Multiple subscriptions to the same
+      channel share the same redis subscription. If all readers subscribed to a channel
+      close their pipe, an unsubscribe would eventually be issued. *)
   val subscribe_raw
     :  _ t
     -> [ `Literal of string list | `Pattern of string list ]

@@ -62,9 +62,8 @@ let create_01_bool_list () =
     | other -> handle_unexpected_response ~expected:"bool list" other)
 ;;
 
-let create_subscription ~channel ~on_success =
+let create_subscription_unsubscription ~expected ~channel ~on_success =
   create (fun buf ->
-    let expected = "subscription" in
     match Resp3.parse_exn buf with
     | String s when String.(s = channel) ->
       (match Resp3.parse_exn buf with
@@ -73,6 +72,14 @@ let create_subscription ~channel ~on_success =
          Ok i
        | other -> handle_unexpected_response ~expected other)
     | other -> handle_unexpected_response ~expected other)
+;;
+
+let create_subscription ~channel ~on_success =
+  create_subscription_unsubscription ~expected:"subscription" ~channel ~on_success
+;;
+
+let create_unsubscription ~channel ~on_success =
+  create_subscription_unsubscription ~expected:"unsubscription" ~channel ~on_success
 ;;
 
 let create_string () =
