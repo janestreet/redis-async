@@ -4,7 +4,7 @@ open Async_unix
 open Deferred.Or_error.Let_syntax
 
 let path () = "/usr/bin/"
-let version = "7.0.0"
+let version = "7.0.11"
 let redis_server_binary () = path () ^/ "redis-server"
 
 

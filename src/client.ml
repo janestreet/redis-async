@@ -438,7 +438,7 @@ struct
               else (
                 let response = Queue.peek_exn t.pending_response in
                 let module R = (val response : Response_intf.S) in
-                Ivar.fill R.this (R.parse buf);
+                Ivar.fill_exn R.this (R.parse buf);
                 (* Parsing this message succeeded. It is now safe to dispose of the
                    pending response and mark that this portion of the buffer has been
                    consumed. *)
@@ -501,7 +501,7 @@ struct
        let%map () = close t in
        Queue.iter t.pending_response ~f:(fun response ->
          let module R = (val response : Response_intf.S) in
-         Ivar.fill R.this (Error reason));
+         Ivar.fill_exn R.this (Error reason));
        Queue.clear t.pending_response;
        Option.iter on_disconnect ~f:(fun f -> f ()));
     (* Tell the session that we will be speaking RESP3 and authenticate if need be *)
