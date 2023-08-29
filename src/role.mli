@@ -20,7 +20,7 @@ module Replica : sig
     ; connection_state   : Connection_state.t
     ; replication_offset : int
     }
-  [@@deriving fields, sexp_of, compare]
+  [@@deriving sexp_of, compare]
 end
 
 module Leader : sig
@@ -29,14 +29,14 @@ module Leader : sig
       { where_to_connect   : Host_and_port.t
       ; replication_offset : int
       }
-    [@@deriving fields, sexp_of, compare]
+    [@@deriving sexp_of, compare]
   end
 
   type t =
     { replication_offset : int
     ; replicas           : Replica.t list
     }
-  [@@deriving fields, sexp_of, compare]
+  [@@deriving sexp_of, compare]
 end
 
 module Sentinel : sig

@@ -8,6 +8,10 @@ module Key_event = Key_event
 module Cursor    = Cursor
 module Role      = Role
 module Auth      = Auth
+module Stream_id = Stream_id
+module Consumer  = Consumer
+module Group     = Group
+module Sha1      = Sha1
 
 module type S = Redis_intf.S
 
@@ -225,7 +229,19 @@ struct
       key
       ~min_score
       ~max_score
+      ~with_scores:false
       (Response.create Value_parser.list)
+  ;;
+
+  let zrangebyscore_withscores t key ~min_score ~max_score =
+    command_key_score_range
+      t
+      [ "ZRANGEBYSCORE" ]
+      key
+      ~min_score
+      ~max_score
+      ~with_scores:true
+      (Response.create Value_parser.with_scores)
   ;;
 
   let zremrangebyscore t key ~min_score ~max_score =
@@ -235,6 +251,7 @@ struct
       key
       ~min_score
       ~max_score
+      ~with_scores:false
       (Response.create_int ())
   ;;
 
@@ -244,6 +261,7 @@ struct
       ~result_of_empty_input:(Ok 0)
       [ "HSET" ]
       [ k ]
+      []
       fvs
       (Response.create_int ())
   ;;
@@ -479,6 +497,196 @@ struct
           [%here]
             "Unexpected response while checking the Redis version"
             (unexpected : Resp3.t)]
+  ;;
+
+  let parse_stream_response buf =
+    Resp3.expect_char buf '*';
+    let len = Resp3.number buf in
+    let result =
+      List.init len ~f:(fun _ ->
+        Resp3.expect_char buf '*';
+        Resp3.expect_char buf '2';
+        Resp3.expect_crlf buf;
+        Resp3.expect_char buf '$';
+        let id = Stream_id.of_string (Resp3.blob_string buf) in
+        let%map.Or_error fvs = Field_value_map_parser.alternating_kv buf in
+        id, fvs)
+    in
+    (* Or_error.all reverses the list! *)
+    Or_error.all (List.rev result)
+  ;;
+
+  let parse_keyed_stream_response buf =
+    match Resp3.consume_char buf with
+    | '_' ->
+      Resp3.expect_crlf buf;
+      Ok []
+    | '%' ->
+      let len = Resp3.number buf in
+      let result =
+        List.init len ~f:(fun _ ->
+          let%bind.Or_error key             = Key_parser.single buf     in
+          let%map.Or_error  stream_response = parse_stream_response buf in
+          key, stream_response)
+      in
+      (* Or_error.all reverses the list! *)
+      Or_error.all (List.rev result)
+    | unexpected ->
+      raise (Resp3.Protocol_error (sprintf "Expected %% or _ but observed %c" unexpected))
+  ;;
+
+  let xadd t key ?stream_id fvlist =
+    let stream_id = Option.value_map stream_id ~default:"*" ~f:Stream_id.to_string in
+    let%map response =
+      command_keys_fields_and_values
+        t
+        [ "XADD" ]
+        [ key ]
+        [ stream_id ]
+        fvlist
+        (Response.create_string ())
+    in
+    Stream_id.of_string response
+  ;;
+
+  let xgroup_create t key group ?stream_id ?mkstream () =
+    let args =
+      Group.to_string group
+      :: Option.value_map stream_id ~default:"$" ~f:Stream_id.to_string
+      :: List.filter_opt  [ Option.map mkstream ~f:(fun () -> "MKSTREAM") ]
+    in
+    match%map.Deferred
+      command_keys_string_args
+        t
+        [ "XGROUP"; "CREATE" ]
+        [ key ]
+        args
+        (Response.create_resp3 ())
+    with
+    | Ok (String "OK") -> Ok `Ok
+    | Ok (Error "BUSYGROUP Consumer Group name already exists") -> Ok `Already_exists
+    | Ok (Error error) -> Or_error.error_string error
+    | Error _ as error -> error
+    | Ok unexpected -> raise_s [%message [%here] (unexpected : Resp3.t)]
+  ;;
+
+  let xrange t key ?start ?end_ ?count () =
+    let start = Option.value_map start ~default:"-" ~f:Stream_id.to_string in
+    let end_  = Option.value_map end_  ~default:"+" ~f:Stream_id.to_string in
+    let args =
+      match count with
+      | None       -> [ start; end_ ]
+      | Some count -> [ start; end_; "COUNT"; Int.to_string count ]
+    in
+    command_keys_string_args
+      t
+      [ "XRANGE" ]
+      [ key      ]
+      args
+      (Response.create parse_stream_response)
+  ;;
+
+  let xreadgroup t group consumer ?count ?(block = `Don't_block) streams =
+    let count =
+      Option.value_map count ~default:[] ~f:(fun count ->
+        [ "COUNT"; Int.to_string count ])
+    in
+    let block =
+      match block with
+      | `Don't_block -> []
+      | `Forever     -> [ "BLOCK"; "0" ]
+      | `For_up_to block -> [ "BLOCK"; Int.to_string (Time_ns.Span.to_int_ms block) ]
+    in
+    command_keys_string_args
+      t
+      ([ "XREADGROUP"; "GROUP"; Group.to_string group; Consumer.to_string consumer ]
+       @ count
+       @ block
+       @ [ "STREAMS" ])
+      (List.map streams ~f:fst)
+      (List.map streams ~f:(fun (_, id) ->
+         Option.value_map id ~default:">" ~f:Stream_id.to_string))
+      (Response.create parse_keyed_stream_response)
+  ;;
+
+  let xclaim_command t ?idle key group consumer ~min_idle_time streams ~trailing ~response
+    =
+    let idle =
+      match idle with
+      | None      -> []
+      | Some idle -> [ "IDLE"; Int.to_string (Time_ns.Span.to_int_ms idle) ]
+    in
+    command_keys_string_args
+      t
+      [ "XCLAIM" ]
+      [ key      ]
+      ([ Group.to_string group
+       ; Consumer.to_string consumer
+       ; Int.to_string (Time_ns.Span.to_int_ms min_idle_time)
+       ]
+       @ List.map streams ~f:Stream_id.to_string
+       @ idle
+       @ trailing)
+      response
+  ;;
+
+  let xclaim =
+    xclaim_command ~trailing:[] ~response:(Response.create parse_stream_response)
+  ;;
+
+  let xclaim_justid t ?idle key group consumer ~min_idle_time streams =
+    let%map sl =
+      xclaim_command
+        t
+        ?idle
+        key
+        group
+        consumer
+        ~min_idle_time
+        streams
+        ~trailing:[ "JUSTID" ]
+        ~response:(Response.create_string_list ())
+    in
+    List.map ~f:Stream_id.of_string sl
+  ;;
+
+  let xautoclaim t key group consumer ~min_idle_time ~start ?count () =
+    let count =
+      Option.value_map count ~default:[] ~f:(fun count ->
+        [ "COUNT"; Int.to_string count ])
+    in
+    command_keys_string_args
+      t
+      [ "XAUTOCLAIM" ]
+      [ key ]
+      ([ Group.to_string group
+       ; Consumer.to_string consumer
+       ; Int.to_string (Time_ns.Span.to_int_ms min_idle_time)
+       ; Stream_id.to_string start
+       ]
+       @ count)
+      (Response.create (fun buf ->
+         Resp3.expect_char buf '*';
+         Resp3.expect_char buf '3';
+         Resp3.expect_crlf buf;
+         Resp3.expect_char buf '$';
+         let next_stream_id = Stream_id.of_string (Resp3.blob_string buf) in
+         let%map.Or_error stream_response = parse_stream_response buf in
+         Resp3.expect_char buf '*';
+         let len = Resp3.number buf in
+         let no_longer_exist =
+           List.init len ~f:(fun _ -> Stream_id.of_string (Resp3.simple_string buf))
+         in
+         `Next_stream_id next_stream_id, stream_response, `No_longer_exist no_longer_exist))
+  ;;
+
+  let xack t key group ids =
+    command_keys_string_args
+      t
+      [ "XACK" ]
+      [ key    ]
+      (Group.to_string group :: List.map ids ~f:Stream_id.to_string)
+      (Response.create_int ())
   ;;
 end
 

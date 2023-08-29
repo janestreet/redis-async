@@ -148,6 +148,7 @@ struct
         ?result_of_empty_input
         cmds
         key_args
+        args
         fields_and_value_args
         (module R : Response_intf.S with type t = r)
     =
@@ -161,9 +162,11 @@ struct
           writer
           (List.length cmds
            + List.length key_args
+           + List.length args
            + (List.length fields_and_value_args * 2));
         List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
         List.iter key_args ~f:(fun arg -> write_array_el writer (module Key) arg);
+        List.iter args ~f:(fun arg -> write_array_el writer (module Bulk_io.String) arg);
         List.iter fields_and_value_args ~f:(fun (field, value) ->
           write_array_el writer (module Field) field;
           write_array_el writer (module Value) value);
@@ -250,6 +253,7 @@ struct
         ~max
         ~infinity_min
         ~infinity_max
+        ~with_scores
         ~incl_prefix
         (module R     : Response_intf.S with type t = r)
         (module Value : Bulk_io.S       with type t = s)
@@ -262,11 +266,13 @@ struct
         | Excl value -> write_array_el writer (module Value) value ~prefix:"("
       in
       Queue.enqueue t.pending_response (module R);
-      write_array_header writer (List.length cmds + 3);
+      let extra_cmds_len = if with_scores then 4 else 3 in
+      write_array_header writer (List.length cmds + extra_cmds_len);
       List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
       write_array_el writer (module Key) key;
       write_bound min infinity_min;
       write_bound max infinity_max;
+      if with_scores then write_array_el writer (module Bulk_io.String) "WITHSCORES";
       Ivar.read R.this)
   ;;
 
@@ -277,6 +283,7 @@ struct
         key
         ~min_score:min
         ~max_score:max
+        ~with_scores
         (module R : Response_intf.S with type t = r)
     =
     (* https://redis.io/commands/zrangebyscore/#exclusive-intervals-and-infinity *)
@@ -289,6 +296,7 @@ struct
       ~infinity_min:"-inf"
       ~infinity_max:"+inf"
       ~incl_prefix:""
+      ~with_scores
       (module R)
       (module Bulk_io.Float)
   ;;
@@ -312,6 +320,7 @@ struct
       ~infinity_min:"-"
       ~infinity_max:"+"
       ~incl_prefix:"["
+      ~with_scores:false
       (module R    )
       (module Value)
   ;;

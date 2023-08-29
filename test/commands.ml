@@ -60,7 +60,7 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
     let%bind response = R.del r [ "c"; "g" ]                in
     print_s ([%sexp_of: int] response);
     [%expect {|
-      1 |}];
+       1 |}];
     let%bind response = R.mget r [ "hello"; "a"; "c"; "e" ] in
     print_s ([%sexp_of: string option list] response);
     [%expect {| (() (b) () (f)) |}];
@@ -262,6 +262,14 @@ let%expect_test "sorted set commands" =
     in
     print_s ([%sexp_of: string list] response);
     [%expect {| (a b c d) |}];
+    let%bind response =
+      R.zrangebyscore_withscores r key_1 ~min_score:Unbounded ~max_score:Unbounded
+    in
+    print_s ([%sexp_of: (string * [ `Score of float ]) list] response);
+    [%expect
+      {|
+      ((a (Score 1)) (b (Score 2)) (c (Score 3)) (d (Score 4)) (e (Score 5))
+       (f (Score 6))) |}];
     (* [rem] *)
     let%bind response = R.zrem r key_1 [ "a"; "b"; "d"; "g" ] in
     [%test_eq: int] response 3;
@@ -515,8 +523,8 @@ let%expect_test "pub/sub" =
     p ();
     [%expect
       {|
-      ((subscribe (Ok ((bar "different channel, same pipe"))))
-       (psubscribe Nothing_available)) |}];
+       ((subscribe (Ok ((bar "different channel, same pipe"))))
+        (psubscribe Nothing_available)) |}];
     return ())
 ;;
 
@@ -753,6 +761,86 @@ let%expect_test "authentication" =
       {| "NOPERM this user has no permissions to access one of the channels used as arguments" |}];
     (* check no error when permission to subscribe **THIS TEST MUST BE LAST** *)
     let%bind (_ : _ Pipe.Reader.t) = R.subscribe r [ "foo" ] in
+    return ())
+;;
+
+let%expect_test "Streams" =
+  (* Test cases are taken from https://redis.io/docs/data-types/streams-tutorial/ *)
+  with_sandbox (fun r ->
+    let%bind response =
+      R.xadd r "mystream" [ "sensor-id", "1234"; "temperature", "19.8" ]
+    in
+    print_s ([%sexp_of: Test_stream_id.t] response);
+    [%expect {| "<stream id>" |}];
+    let%bind response =
+      R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-1") [ "field", "value" ]
+    in
+    print_s ([%sexp_of: Redis.Stream_id.t] response);
+    [%expect {| 0-1 |}];
+    let%bind response =
+      R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-2") [ "foo", "bar" ]
+    in
+    print_s ([%sexp_of: Redis.Stream_id.t] response);
+    [%expect {| 0-2 |}];
+    let%bind.Deferred response =
+      R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-1") [ "foo", "bar" ]
+    in
+    print_s ([%sexp_of: Redis.Stream_id.t Or_error.t] response);
+    [%expect
+      {|
+      (Error
+       "ERR The ID specified in XADD is equal or smaller than the target stream top item") |}];
+    let%bind response =
+      R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-*") [ "baz", "qux" ]
+    in
+    print_s ([%sexp_of: Redis.Stream_id.t] response);
+    [%expect {| 0-3 |}];
+    let%bind response = R.xrange r "mystream" () in
+    print_s ([%sexp_of: (Test_stream_id.t * (string * string) list) list] response);
+    [%expect {| (("<stream id>" ((sensor-id 1234) (temperature 19.8)))) |}];
+    let group = Group.of_string "mygroup" in
+    let%bind response = R.xgroup_create r "stream" group ~mkstream:() () in
+    print_s ([%sexp_of: [ `Ok | `Already_exists ]] response);
+    [%expect {| Ok |}];
+    let%bind _ = R.xadd r "stream" [ "message", "apple"      ]           in
+    let%bind _ = R.xadd r "stream" [ "message", "orange"     ]           in
+    let%bind _ = R.xadd r "stream" [ "message", "strawberry" ]           in
+    let%bind _ = R.xadd r "stream" [ "message", "apricot"    ]           in
+    let%bind _ = R.xadd r "stream" [ "message", "banana"     ]           in
+    let%bind response = R.xgroup_create r "stream" group ~mkstream:() () in
+    print_s ([%sexp_of: [ `Ok | `Already_exists ]] response);
+    [%expect {| Already_exists |}];
+    let%bind response =
+      R.xreadgroup r group (Consumer.of_string "Alice") ~count:1 [ "stream", None ]
+    in
+    print_s
+      ([%sexp_of: (string * (Test_stream_id.t * (string * string) list) list) list]
+         response);
+    [%expect {| ((stream (("<stream id>" ((message apple)))))) |}];
+    let stream_id = fst (List.hd_exn (snd (List.hd_exn response))) in
+    let%bind stream_ids =
+      R.xclaim_justid
+        r
+        "stream"
+        group
+        (Consumer.of_string "Alice")
+        ~min_idle_time:Time_ns.Span.zero
+        [ stream_id ]
+    in
+    [%test_eq: Stream_id.t list] stream_ids [ stream_id ];
+    let%bind response = R.xack r "stream" group [ stream_id ] in
+    print_s ([%sexp_of: int] response);
+    [%expect {| 1 |}];
+    let%bind response =
+      R.xreadgroup r group (Consumer.of_string "Bob") ~count:2 [ "stream", None ]
+    in
+    print_s
+      ([%sexp_of: (string * (Test_stream_id.t * (string * string) list) list) list]
+         response);
+    [%expect
+      {|
+      ((stream
+        (("<stream id>" ((message orange))) ("<stream id>" ((message strawberry)))))) |}];
     return ())
 ;;
 

@@ -4,4 +4,3 @@ type t =
   { username : string
   ; password : string
   }
-[@@deriving fields]

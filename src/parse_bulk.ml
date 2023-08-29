@@ -74,6 +74,20 @@ module Make (T : Bulk_io_intf.S) = struct
       c, l
     | _ -> backtrack_and_extract_error buf
   ;;
+
+  let with_scores buf =
+    match Resp3.parse_exn buf with
+    | Array a ->
+      Array.map a ~f:(function
+        | Resp3.Array [| String value; Double score |] ->
+          let value = T.Redis_bulk_io.of_string value, `Score score in
+          Or_error.return value
+        | _ -> Or_error.error_s [%message "Invalid with_scores response"])
+      |> Array.to_list
+      |> Or_error.all
+    | Null | String _ | Error _ | Int _ | Double _ | Boolean _ | Bignum _ | Map _ | Set _
+      -> Or_error.error_s [%message "with_scores must return an array"]
+  ;;
 end
 
 module Make_map (K : Parse_bulk_intf.S) (V : Parse_bulk_intf.S) = struct

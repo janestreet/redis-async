@@ -28,6 +28,11 @@ module type S = sig
 
   (** A cursor followed by a list. Example: SCAN *)
   val cursor_and_list : ([> read ], Iobuf.seek) Iobuf.t -> (Cursor.t * t list) Or_error.t
+
+  (** An array of tuples of [value * score]. Example: [ZRANGEBYSCORE ... WITHSCORES] *)
+  val with_scores
+    :  ([> read ], Iobuf.seek) Iobuf.t
+    -> (t * [ `Score of float ]) list Or_error.t
 end
 
 (** The term "map" here refers to a map node in the RESP3 protocol, which is represented
@@ -37,7 +42,10 @@ module type S_map = sig
   type value
 
   (** field/value pairs. Example: HGETALL *)
-  val map : ([> read ], Iobuf.seek) Iobuf.t -> (key * value) list Or_error.t
+  val map            : ([> read ], Iobuf.seek) Iobuf.t -> (key * value) list Or_error.t
+
+  (** A flat array containing repeating key value pairs. Example: XRANGE *)
+  val alternating_kv : ([> read ], Iobuf.seek) Iobuf.t -> (key * value) list Or_error.t
 
   (** A cursor followed by field/value pairs. Example: HSCAN *)
   val cursor_and_alternating_key_value

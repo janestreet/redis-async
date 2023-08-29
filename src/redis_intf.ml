@@ -140,6 +140,13 @@ module type S = sig
     -> max_score:float Maybe_bound.t
     -> Value.t list Deferred.Or_error.t
 
+  val zrangebyscore_withscores
+    :  t
+    -> Key.t
+    -> min_score:float Maybe_bound.t
+    -> max_score:float Maybe_bound.t
+    -> (Value.t * [ `Score of float ]) list Deferred.Or_error.t
+
   val zremrangebyscore
     :  t
     -> Key.t
@@ -212,4 +219,76 @@ module type S = sig
 
       Read here for more: https://redis.io/docs/manual/sentinel/#sentinel-api *)
   val sentinel_leader : t -> string -> Host_and_port.t Deferred.Or_error.t
+
+  (** Streams *)
+
+  val xadd
+    :  t
+    -> Key.t
+    -> ?stream_id:Stream_id.t
+    -> (Field.t * Value.t) list
+    -> Stream_id.t Deferred.Or_error.t
+
+  val xgroup_create
+    :  t
+    -> Key.t
+    -> Group.t
+    -> ?stream_id:Stream_id.t
+    -> ?mkstream:unit
+    -> unit
+    -> [ `Ok | `Already_exists ] Deferred.Or_error.t
+
+  val xrange
+    :  t
+    -> Key.t
+    -> ?start:Stream_id.t
+    -> ?end_:Stream_id.t
+    -> ?count:int
+    -> unit
+    -> (Stream_id.t * (Field.t * Value.t) list) list Deferred.Or_error.t
+
+  val xreadgroup
+    :  t
+    -> Group.t
+    -> Consumer.t
+    -> ?count:int
+    -> ?block:[ `Don't_block | `Forever | `For_up_to of Time_ns.Span.t ]
+    -> (Key.t * Stream_id.t option) list
+    -> (Key.t * (Stream_id.t * (Field.t * Value.t) list) list) list Deferred.Or_error.t
+
+  val xclaim
+    :  t
+    -> ?idle:Time_ns.Span.t
+    -> Key.t
+    -> Group.t
+    -> Consumer.t
+    -> min_idle_time:Time_ns.Span.t
+    -> Stream_id.t list
+    -> (Stream_id.t * (Field.t * Value.t) list) list Deferred.Or_error.t
+
+  val xclaim_justid
+    :  t
+    -> ?idle:Time_ns.Span.t
+    -> Key.t
+    -> Group.t
+    -> Consumer.t
+    -> min_idle_time:Time_ns.Span.t
+    -> Stream_id.t list
+    -> Stream_id.t list Deferred.Or_error.t
+
+  val xautoclaim
+    :  t
+    -> Key.t
+    -> Group.t
+    -> Consumer.t
+    -> min_idle_time:Time_ns.Span.t
+    -> start:Stream_id.t
+    -> ?count:int
+    -> unit
+    -> ([ `Next_stream_id of Stream_id.t ]
+        * (Stream_id.t * (Field.t * Value.t) list) list
+        * [ `No_longer_exist of Stream_id.t list ])
+         Deferred.Or_error.t
+
+  val xack : t -> Key.t -> Group.t -> Stream_id.t list -> int Deferred.Or_error.t
 end

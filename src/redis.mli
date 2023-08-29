@@ -5,6 +5,10 @@ module Key_event = Key_event
 module Cursor    = Cursor
 module Role      = Role
 module Auth      = Auth
+module Stream_id = Stream_id
+module Consumer  = Consumer
+module Group     = Group
+module Sha1      = Sha1
 
 module type S = Redis_intf.S
 

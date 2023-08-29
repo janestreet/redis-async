@@ -92,6 +92,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> ?result_of_empty_input:'r Or_error.t
     -> string list
     -> Key.t list
+    -> string list
     -> (Field.t * Value.t) list
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
@@ -139,6 +140,8 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> Key.t
     -> min_score:float Maybe_bound.t
     -> max_score:float Maybe_bound.t
+    -> with_scores:bool
+    (** If true, use [Value_parser.with_scores] to build the response type. *)
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
 
