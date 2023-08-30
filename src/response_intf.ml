@@ -10,6 +10,6 @@ open Async
 module type S = sig
   type t
 
-  val this  : t Or_error.t Ivar.t
+  val this : t Or_error.t Ivar.t
   val parse : ([> read ], Iobuf.seek) Iobuf.t -> t Or_error.t
 end

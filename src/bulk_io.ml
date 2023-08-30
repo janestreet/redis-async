@@ -10,7 +10,7 @@ module Make_binable (T : Binable.S) = struct
     let consume ~len buf =
       Common.check_length_exn ~len buf;
       let pos_ref = ref (Iobuf.Expert.lo buf) in
-      let bstr    = Iobuf.Expert.buf buf      in
+      let bstr = Iobuf.Expert.buf buf in
       match T.bin_reader_t.read bstr ~pos_ref with
       | result ->
         let consumed = !pos_ref - Iobuf.Expert.lo buf in
@@ -40,13 +40,13 @@ module Make_stringable (T : Stringable.S) = struct
       Common.check_length_exn ~len buf;
       let str = Iobuf.Unsafe.Consume.stringo ~len buf in
       match T.of_string str with
-      | t             -> Or_error.return t
+      | t -> Or_error.return t
       | exception exn -> Or_error.of_exn exn
     ;;
 
     let write ~len writer t = Writer.write writer ~len (T.to_string t)
-    let to_string           = T.to_string
-    let of_string           = T.of_string
+    let to_string = T.to_string
+    let of_string = T.of_string
   end
 end
 

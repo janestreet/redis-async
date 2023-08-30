@@ -11,20 +11,20 @@ type t =
 [@@deriving sexp_of]
 
 let to_string = function
-  | `del     -> "del"
-  | `expire  -> "expire"
+  | `del -> "del"
+  | `expire -> "expire"
   | `expired -> "expired"
-  | `new_    -> "new"
-  | `set     -> "set"
-  | `hset    -> "hset"
+  | `new_ -> "new"
+  | `set -> "set"
+  | `hset -> "hset"
 ;;
 
 let of_string = function
-  | "del"     -> `del
-  | "expire"  -> `expire
-  | "new"     -> `new_
+  | "del" -> `del
+  | "expire" -> `expire
+  | "new" -> `new_
   | "expired" -> `expired
-  | "set"     -> `set
-  | "hset"    -> `hset
-  | str       -> raise_s [%message [%here] "Unexpected" (str : string)]
+  | "set" -> `set
+  | "hset" -> `hset
+  | str -> raise_s [%message [%here] "Unexpected" (str : string)]
 ;;

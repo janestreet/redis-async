@@ -6,7 +6,7 @@ open Async
 type 'a t
 
 module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_intf.S) : sig
-  module Key_parser   : Parse_bulk_intf.S with type t := Key.t
+  module Key_parser : Parse_bulk_intf.S with type t := Key.t
   module Field_parser : Parse_bulk_intf.S with type t := Field.t
   module Value_parser : Parse_bulk_intf.S with type t := Value.t
 
@@ -36,8 +36,8 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> unit
     -> Key.t t Deferred.Or_error.t
 
-  val close             : Key.t t -> unit Deferred.t
-  val close_finished    : Key.t t -> unit Deferred.t
+  val close : Key.t t -> unit Deferred.t
+  val close_finished : Key.t t -> unit Deferred.t
   val has_close_started : Key.t t -> bool
 
   (** Send a command built from strings to Redis and expect a Response of the specified
@@ -141,7 +141,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> min_score:float Maybe_bound.t
     -> max_score:float Maybe_bound.t
     -> with_scores:bool
-    (** If true, use [Value_parser.with_scores] to build the response type. *)
+         (** If true, use [Value_parser.with_scores] to build the response type. *)
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
 

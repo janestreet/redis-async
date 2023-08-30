@@ -8,7 +8,7 @@ let disconnect_message = "Disconnected from Redis: see server logs for detail"
     specific to the individual subscriber. *)
 type subscriber =
   | Subscriber :
-      { writer  : 'a Pipe.Writer.t
+      { writer : 'a Pipe.Writer.t
       ; consume : (read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a
       }
       -> subscriber
@@ -23,37 +23,37 @@ type subscriber =
 type subscription_table = subscriber list String.Table.t
 
 type 'a t =
-  { pending_response      : (module Response_intf.S) Queue.t
-  ; reader                : Reader.t
-  ; writer                : Writer.t
+  { pending_response : (module Response_intf.S) Queue.t
+  ; reader : Reader.t
+  ; writer : Writer.t
   ; mutable invalidations : [ `All | `Key of 'a ] Pipe.Writer.t list
-  ; subscriptions         : subscription_table
+  ; subscriptions : subscription_table
   ; pattern_subscriptions : subscription_table
   }
 
 module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_intf.S) =
 struct
-  module Key_parser   = Parse_bulk.Make (Key)
+  module Key_parser = Parse_bulk.Make (Key)
   module Field_parser = Parse_bulk.Make (Field)
   module Value_parser = Parse_bulk.Make (Value)
   module Field_value_map_parser = Parse_bulk.Make_map (Field_parser) (Value_parser)
 
   let write_array_header writer len =
     Writer.write_char writer '*';
-    Writer.write      writer (itoa len);
+    Writer.write writer (itoa len);
     write_crlf writer
   ;;
 
   let write_array_el
-        (type w)
-        writer
-        (module IO : Bulk_io_intf.S with type t = w)
-        ?(prefix = "")
-        el
+    (type w)
+    writer
+    (module IO : Bulk_io_intf.S with type t = w)
+    ?(prefix = "")
+    el
     =
     let len = IO.Redis_bulk_io.length el in
     Writer.write_char writer '$';
-    Writer.write      writer (len + String.length prefix |> itoa);
+    Writer.write writer (len + String.length prefix |> itoa);
     write_crlf writer;
     Writer.write writer prefix;
     IO.Redis_bulk_io.write ~len writer el;
@@ -67,12 +67,12 @@ struct
   ;;
 
   let command_key
-        (type r)
-        t
-        ?result_of_empty_input
-        cmds
-        args
-        (module R : Response_intf.S with type t = r)
+    (type r)
+    t
+    ?result_of_empty_input
+    cmds
+    args
+    (module R : Response_intf.S with type t = r)
     =
     match result_of_empty_input with
     | Some result when List.is_empty args -> return result
@@ -81,19 +81,19 @@ struct
         Queue.enqueue t.pending_response (module R);
         write_array_header writer (List.length cmds + List.length args);
         List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
-        List.iter args ~f:(fun arg -> write_array_el writer (module Key           ) arg);
+        List.iter args ~f:(fun arg -> write_array_el writer (module Key) arg);
         Ivar.read R.this)
   ;;
 
   let command_keys_args
-        (type r a)
-        t
-        ?result_of_empty_input
-        cmds
-        key_args
-        args
-        (module Arg : Bulk_io_intf.S  with type t = a)
-        (module R   : Response_intf.S with type t = r)
+    (type r a)
+    t
+    ?result_of_empty_input
+    cmds
+    key_args
+    args
+    (module Arg : Bulk_io_intf.S with type t = a)
+    (module R : Response_intf.S with type t = r)
     =
     match result_of_empty_input with
     | Some result when List.is_empty key_args || List.is_empty args -> return result
@@ -103,9 +103,9 @@ struct
         write_array_header
           writer
           (List.length cmds + List.length key_args + List.length args);
-        List.iter cmds     ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
-        List.iter key_args ~f:(fun arg -> write_array_el writer (module Key           ) arg);
-        List.iter args     ~f:(fun arg -> write_array_el writer (module Arg           ) arg);
+        List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
+        List.iter key_args ~f:(fun arg -> write_array_el writer (module Key) arg);
+        List.iter args ~f:(fun arg -> write_array_el writer (module Arg) arg);
         Ivar.read R.this)
   ;;
 
@@ -143,14 +143,14 @@ struct
   ;;
 
   let command_keys_fields_and_values
-        (type r)
-        t
-        ?result_of_empty_input
-        cmds
-        key_args
-        args
-        fields_and_value_args
-        (module R : Response_intf.S with type t = r)
+    (type r)
+    t
+    ?result_of_empty_input
+    cmds
+    key_args
+    args
+    fields_and_value_args
+    (module R : Response_intf.S with type t = r)
     =
     match result_of_empty_input with
     | Some result when List.is_empty key_args || List.is_empty fields_and_value_args ->
@@ -178,13 +178,13 @@ struct
   ;;
 
   let command_kv
-        (type r)
-        t
-        ?result_of_empty_input
-        cmds
-        alist
-        args
-        (module R : Response_intf.S with type t = r)
+    (type r)
+    t
+    ?result_of_empty_input
+    cmds
+    alist
+    args
+    (module R : Response_intf.S with type t = r)
     =
     match result_of_empty_input with
     | Some result when List.is_empty alist -> return result
@@ -194,22 +194,22 @@ struct
         write_array_header
           writer
           (List.length cmds + (List.length alist * 2) + List.length args);
-        List.iter cmds  ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
+        List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
         List.iter alist ~f:(fun (key, value) ->
-          write_array_el writer (module Key  ) key;
+          write_array_el writer (module Key) key;
           write_array_el writer (module Value) value);
         List.iter args ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
         Ivar.read R.this)
   ;;
 
   let command_key_scores_values
-        (type r)
-        t
-        ?result_of_empty_input
-        cmds
-        key
-        alist
-        (module R : Response_intf.S with type t = r)
+    (type r)
+    t
+    ?result_of_empty_input
+    cmds
+    key
+    alist
+    (module R : Response_intf.S with type t = r)
     =
     match result_of_empty_input with
     | Some result when List.is_empty alist -> return result
@@ -226,13 +226,13 @@ struct
   ;;
 
   let command_key_range
-        (type r)
-        t
-        cmds
-        key
-        ~min_index
-        ~max_index
-        (module R : Response_intf.S with type t = r)
+    (type r)
+    t
+    cmds
+    key
+    ~min_index
+    ~max_index
+    (module R : Response_intf.S with type t = r)
     =
     with_writer t (fun writer ->
       Queue.enqueue t.pending_response (module R);
@@ -245,23 +245,23 @@ struct
   ;;
 
   let command_key_bounded_range
-        (type r s)
-        t
-        cmds
-        key
-        ~min
-        ~max
-        ~infinity_min
-        ~infinity_max
-        ~with_scores
-        ~incl_prefix
-        (module R     : Response_intf.S with type t = r)
-        (module Value : Bulk_io.S       with type t = s)
+    (type r s)
+    t
+    cmds
+    key
+    ~min
+    ~max
+    ~infinity_min
+    ~infinity_max
+    ~with_scores
+    ~incl_prefix
+    (module R : Response_intf.S with type t = r)
+    (module Value : Bulk_io.S with type t = s)
     =
     with_writer t (fun writer ->
       let write_bound bound infinite_symbol =
         match bound with
-        | Unbounded  -> write_array_el writer (module Bulk_io.String) infinite_symbol
+        | Unbounded -> write_array_el writer (module Bulk_io.String) infinite_symbol
         | Incl value -> write_array_el writer (module Value) value ~prefix:incl_prefix
         | Excl value -> write_array_el writer (module Value) value ~prefix:"("
       in
@@ -277,14 +277,14 @@ struct
   ;;
 
   let command_key_score_range
-        (type r)
-        t
-        cmds
-        key
-        ~min_score:min
-        ~max_score:max
-        ~with_scores
-        (module R : Response_intf.S with type t = r)
+    (type r)
+    t
+    cmds
+    key
+    ~min_score:min
+    ~max_score:max
+    ~with_scores
+    (module R : Response_intf.S with type t = r)
     =
     (* https://redis.io/commands/zrangebyscore/#exclusive-intervals-and-infinity *)
     command_key_bounded_range
@@ -302,13 +302,13 @@ struct
   ;;
 
   let command_key_lex_range
-        (type r)
-        t
-        cmds
-        key
-        ~min
-        ~max
-        (module R : Response_intf.S with type t = r)
+    (type r)
+    t
+    cmds
+    key
+    ~min
+    ~max
+    (module R : Response_intf.S with type t = r)
     =
     (* https://redis.io/commands/zrangebylex/#how-to-specify-intervals *)
     command_key_bounded_range
@@ -321,7 +321,7 @@ struct
       ~infinity_max:"+"
       ~incl_prefix:"["
       ~with_scores:false
-      (module R    )
+      (module R)
       (module Value)
   ;;
 
@@ -332,11 +332,11 @@ struct
         t.invalidations
         ~init:(false, [])
         ~f:(fun (was_changed, invalidations) invalidation ->
-          if Pipe.is_closed invalidation
-          then true, invalidations
-          else (
-            Pipe.write_without_pushback invalidation data;
-            was_changed, invalidation :: invalidations))
+        if Pipe.is_closed invalidation
+        then true, invalidations
+        else (
+          Pipe.write_without_pushback invalidation data;
+          was_changed, invalidation :: invalidations))
     in
     if was_changed
     then (
@@ -396,9 +396,9 @@ struct
     | 3, ("subscribe" | "psubscribe" | "unsubscribe" | "punsubscribe") ->
       (* Intentionally ignored, see comments for the [subscribe] command *)
       ()
-    | 3  , "message"  -> handle_message t.subscriptions buf
-    | 4  , "pmessage" -> handle_message t.pattern_subscriptions buf
-    | len, _          ->
+    | 3, "message" -> handle_message t.subscriptions buf
+    | 4, "pmessage" -> handle_message t.pattern_subscriptions buf
+    | len, _ ->
       raise_s
         [%message
           "Received a PUSH message type which is not implemented"
@@ -436,7 +436,7 @@ struct
             | '>' ->
               Iobuf.advance buf 1;
               read_push t buf
-            | _   ->
+            | _ ->
               if Queue.is_empty t.pending_response
               then
                 raise_s
@@ -466,7 +466,7 @@ struct
 
   let close t =
     let%bind () = Writer.close t.writer in
-    let%map  () = Reader.close t.reader in
+    let%map () = Reader.close t.reader in
     List.iter t.invalidations ~f:Pipe.close;
     t.invalidations <- [];
     List.iter
@@ -494,8 +494,8 @@ struct
       { pending_response
       ; reader
       ; writer
-      ; invalidations         = []
-      ; subscriptions         = String.Table.create ()
+      ; invalidations = []
+      ; subscriptions = String.Table.create ()
       ; pattern_subscriptions = String.Table.create ()
       }
     in
@@ -505,7 +505,7 @@ struct
        let reason =
          match reason with
          | `Eof | `Eof_with_unconsumed_data _ -> Error.of_string disconnect_message
-         | `Stopped exn                       -> Error.of_exn exn
+         | `Stopped exn -> Error.of_exn exn
        in
        let%map () = close t in
        Queue.iter t.pending_response ~f:(fun response ->
@@ -518,7 +518,7 @@ struct
       [ "HELLO"; "3" ]
       (* When protover (i.e. 2/3) is used, we can also pass [AUTH] and [SETNAME] to [HELLO]. *)
       @ Option.value_map auth ~default:[] ~f:(fun { Auth.username; password } ->
-        [ "AUTH"; username; password ])
+          [ "AUTH"; username; password ])
     in
     let%map.Deferred.Or_error (_ : Resp3.t String.Map.t) =
       command_string t cmds (Response.create_string_map ())
@@ -538,7 +538,7 @@ struct
         [ "SENTINEL"; "GET-MASTER-ADDR-BY-NAME"; leader_name ]
         (Response.create_host_and_port ())
     with
-    | Error e   -> Deferred.Or_error.fail e
+    | Error e -> Deferred.Or_error.fail e
     | Ok leader ->
       Tcp.Where_to_connect.of_host_and_port leader |> Deferred.Or_error.return
   ;;
@@ -553,12 +553,12 @@ struct
   ;;
 
   let create_using_sentinel
-        ?on_disconnect
-        ?sentinel_auth
-        ?auth
-        ~leader_name
-        ~where_to_connect
-        ()
+    ?on_disconnect
+    ?sentinel_auth
+    ?auth
+    ~leader_name
+    ~where_to_connect
+    ()
     =
     (* Sentinel requires two connection steps:
 
@@ -596,7 +596,7 @@ struct
                    (sentinel_addr : [< Socket.Address.t ] Tcp.Where_to_connect.t)]
       in
       match%bind is_leader leader_conn with
-      | Ok ()       -> Deferred.Or_error.return leader_conn
+      | Ok () -> Deferred.Or_error.return leader_conn
       | Error error ->
         let%bind () = close leader_conn in
         Deferred.Or_error.fail
@@ -613,11 +613,11 @@ struct
   let client_tracking t ?(bcast = false) () =
     let commands =
       match bcast with
-      | false -> [ "CLIENT"; "TRACKING"; "ON"; "NOLOOP"          ]
-      | true  -> [ "CLIENT"; "TRACKING"; "ON"; "NOLOOP"; "BCAST" ]
+      | false -> [ "CLIENT"; "TRACKING"; "ON"; "NOLOOP" ]
+      | true -> [ "CLIENT"; "TRACKING"; "ON"; "NOLOOP"; "BCAST" ]
     in
-    let reader, writer = Pipe.create   ()              in
-    let was_empty      = List.is_empty t.invalidations in
+    let reader, writer = Pipe.create () in
+    let was_empty = List.is_empty t.invalidations in
     t.invalidations <- writer :: t.invalidations;
     let%map.Deferred.Or_error () =
       if was_empty
@@ -628,11 +628,11 @@ struct
   ;;
 
   let add_subscriber
-        t
-        (lookup : subscription_table)
-        ~unsubscribe_command
-        (Subscriber { writer; _ } as subscriber)
-        ~channel
+    t
+    (lookup : subscription_table)
+    ~unsubscribe_command
+    (Subscriber { writer; _ } as subscriber)
+    ~channel
     =
     Hashtbl.add_multi lookup ~key:channel ~data:subscriber;
     don't_wait_for
@@ -685,7 +685,7 @@ struct
        in-band protocol message. This command expects the same number of responses of this
        shape as channels specified to the command or an error, in which case it will
        dequeue whatever other responses it may be expecting. *)
-    let subscription_reader, subscription_writer = Pipe.create ()         in
+    let subscription_reader, subscription_writer = Pipe.create () in
     let subscriber = Subscriber { consume; writer = subscription_writer } in
     match
       List.filter channels ~f:(fun channel ->
@@ -719,15 +719,15 @@ struct
             write_array_el writer (module Bulk_io.String) channel;
             channel, r)
           |> List.fold ~init:Deferred.Or_error.ok_unit ~f:(fun acc (_channel, r) ->
-            match%bind.Deferred acc with
-            | Error error ->
-              (* If there was an error, dequeue the next subscription request, as there will never be a response. *)
-              ignore (Queue.dequeue_exn t.pending_response : (module Response_intf.S));
-              Deferred.Or_error.fail error
-            | Ok () ->
-              let (module R) = r in
-              let%map.Deferred.Or_error _ = Ivar.read R.this in
-              ()))
+               match%bind.Deferred acc with
+               | Error error ->
+                 (* If there was an error, dequeue the next subscription request, as there will never be a response. *)
+                 ignore (Queue.dequeue_exn t.pending_response : (module Response_intf.S));
+                 Deferred.Or_error.fail error
+               | Ok () ->
+                 let (module R) = r in
+                 let%map.Deferred.Or_error _ = Ivar.read R.this in
+                 ()))
       in
       subscription_reader
   ;;

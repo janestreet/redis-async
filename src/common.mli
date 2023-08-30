@@ -1,5 +1,5 @@
 open! Core
-open  Async
+open Async
 
 exception Need_more_data
 

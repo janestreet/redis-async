@@ -7,7 +7,6 @@ let path () = "/usr/bin/"
 let version = "7.0.11"
 let redis_server_binary () = path () ^/ "redis-server"
 
-
 module Redis_string = Redis.Make (Redis.Bulk_io.String) (Redis.Bulk_io.String)
 
 let mkdtmp () = Unix.mkdtemp "/dev/shm/redis"
@@ -16,7 +15,7 @@ let create ~args ~connected directory =
   let redis_server = redis_server_binary () in
   let%bind () =
     match%map.Deferred Sys.file_exists redis_server with
-    | `Yes           -> Or_error.return ()
+    | `Yes -> Or_error.return ()
     | `No | `Unknown ->
       Or_error.error_s [%message [%here] "The redis binary was not found" ~redis_server]
   in
@@ -45,7 +44,7 @@ let create ~args ~connected directory =
     match%bind.Deferred
       Clock_ns.with_timeout (Time_ns.Span.of_int_sec 30) (connected ())
     with
-    | `Result (Ok ())              -> return ()
+    | `Result (Ok ()) -> return ()
     | `Result (Error _) | `Timeout ->
       Deferred.Or_error.error_s [%message [%here] "Redis did not start"]
   in
@@ -59,16 +58,16 @@ let create ~args ~connected directory =
 
 let create_with_sock ?(args = []) ?connected () =
   let%bind.Deferred directory = mkdtmp () in
-  let unixsocket       = directory ^ "/redis.sock"               in
+  let unixsocket = directory ^ "/redis.sock" in
   let where_to_connect = Tcp.Where_to_connect.of_file unixsocket in
-  let args             = args @ [ "--unixsocket"; unixsocket ]   in
+  let args = args @ [ "--unixsocket"; unixsocket ] in
   let connected () =
     let%bind.Deferred () = Sys.when_file_exists unixsocket in
     match connected with
     | Some connected ->
-      let%bind          r    = Redis_string.create ~where_to_connect () in
-      let%bind.Deferred resp = connected r                              in
-      let%bind.Deferred ()   = Redis_string.close r                     in
+      let%bind r = Redis_string.create ~where_to_connect () in
+      let%bind.Deferred resp = connected r in
+      let%bind.Deferred () = Redis_string.close r in
       Deferred.return resp
     | None -> return ()
   in
@@ -87,18 +86,18 @@ let reset_acl client =
   let users =
     List.filter users ~f:(function
       | "default" -> false
-      | _         -> true)
+      | _ -> true)
   in
   Redis_string.acl_deluser client users |> Deferred.Or_error.ignore_m
 ;;
 
 let flush where_to_connect =
-  let%bind r  = Redis_string.create ~where_to_connect () in
-  let%bind () = reset_acl r                              in
+  let%bind r = Redis_string.create ~where_to_connect () in
+  let%bind () = reset_acl r in
   let%bind () =
     match%bind Redis_string.role r with
     | Sentinel _ | Replica _ -> return ()
-    | Leader _               -> Redis_string.flushall r
+    | Leader _ -> Redis_string.flushall r
   in
   let%map.Deferred () = Redis_string.close r in
   Ok ()
@@ -110,7 +109,7 @@ let where_to_connect_leader () =
   let%bind where_to_connect_unix, where_to_connect_inet =
     let open Set_once.Optional_syntax in
     match%optional l with
-    | None                  ->
+    | None ->
       let where_to_connect = create_with_sock () in
       Set_once.set_exn l [%here] where_to_connect;
       where_to_connect
@@ -121,7 +120,7 @@ let where_to_connect_leader () =
 ;;
 
 let where_to_connect = where_to_connect_leader
-let r                = Set_once.create ()
+let r = Set_once.create ()
 
 let where_to_connect_replica () =
   let%bind _, leader = where_to_connect_leader () in
@@ -164,15 +163,15 @@ let where_to_connect_replica () =
 let s = Set_once.create ()
 
 let where_to_connect_sentinel () =
-  let%bind _, leader = where_to_connect_leader  () in
-  let%bind _         = where_to_connect_replica () in
+  let%bind _, leader = where_to_connect_leader () in
+  let%bind _ = where_to_connect_replica () in
   let open Set_once.Optional_syntax in
   match%optional s with
   | None ->
-    let%bind.Deferred directory = mkdtmp ()                                  in
-    let%bind.Deferred leader    = Tcp.Where_to_connect.remote_address leader in
-    let leader      = Socket.Address.Inet.to_host_and_port leader in
-    let leader_name = "test"                                      in
+    let%bind.Deferred directory = mkdtmp () in
+    let%bind.Deferred leader = Tcp.Where_to_connect.remote_address leader in
+    let leader = Socket.Address.Inet.to_host_and_port leader in
+    let leader_name = "test" in
     let%bind.Deferred config_file, _ = Unix.mkstemp (directory ^ "/redis_conf") in
     let args =
       [ config_file
@@ -203,18 +202,18 @@ let where_to_connect_sentinel () =
 ;;
 
 let run (type r) (module R : Redis.S with type t = r) f =
-  let%bind         where_to_connect, _ = where_to_connect ()           in
-  let%bind         r                   = R.create ~where_to_connect () in
-  let%bind         ()                  = f r                           in
-  let%map.Deferred ()                  = R.close r                     in
+  let%bind where_to_connect, _ = where_to_connect () in
+  let%bind r = R.create ~where_to_connect () in
+  let%bind () = f r in
+  let%map.Deferred () = R.close r in
   Ok ()
 ;;
 
 let run_replica (type r) (module R : Redis.S with type t = r) f =
-  let%bind         where_to_connect, _ = where_to_connect_replica ()   in
-  let%bind         r                   = R.create ~where_to_connect () in
-  let%bind         ()                  = f r                           in
-  let%map.Deferred ()                  = R.close r                     in
+  let%bind where_to_connect, _ = where_to_connect_replica () in
+  let%bind r = R.create ~where_to_connect () in
+  let%bind () = f r in
+  let%map.Deferred () = R.close r in
   Ok ()
 ;;
 
@@ -224,7 +223,7 @@ let run_sentinel (type r) (module R : Redis.S with type t = r) f =
   let%bind r =
     R.create_using_sentinel ~leader_name ~where_to_connect:[ where_to_connect ] ()
   in
-  let%bind         () = f r       in
+  let%bind () = f r in
   let%map.Deferred () = R.close r in
   Ok ()
 ;;
@@ -237,8 +236,8 @@ let teardown ?on_disconnect () =
     R.shutdown r
   in
   let%bind _, sentinel = where_to_connect_sentinel () in
-  let%bind _, replica  = where_to_connect_replica  () in
-  let%bind _, leader   = where_to_connect          () in
+  let%bind _, replica = where_to_connect_replica () in
+  let%bind _, leader = where_to_connect () in
   (* The order we shutdown matters due to inter-dependencies. *)
   Deferred.Or_error.combine_errors_unit
     (List.map [ sentinel; replica; leader ] ~f:disconnect)

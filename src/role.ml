@@ -8,15 +8,15 @@ module Replica = struct
       | Sync
       | Connected
       | Handshake
-      (** [Handshake] Undocumented. Can happen if the replica is unable to connect to the leader. *)
+          (** [Handshake] Undocumented. Can happen if the replica is unable to connect to the leader. *)
     [@@deriving sexp_of, compare]
 
     let of_string = function
-      | "connect"    -> Ok Connect
+      | "connect" -> Ok Connect
       | "connecting" -> Ok Connecting
-      | "sync"       -> Ok Sync
-      | "connected"  -> Ok Connected
-      | "handshake"  -> Ok Handshake
+      | "sync" -> Ok Sync
+      | "connected" -> Ok Connected
+      | "handshake" -> Ok Handshake
       | connection_state ->
         Or_error.error_s
           [%message "Unrecognized connection state" (connection_state : string)]
@@ -24,8 +24,8 @@ module Replica = struct
   end
 
   type t =
-    { leader             : Host_and_port.t
-    ; connection_state   : Connection_state.t
+    { leader : Host_and_port.t
+    ; connection_state : Connection_state.t
     ; replication_offset : int
     }
   [@@deriving sexp_of, compare]
@@ -50,7 +50,7 @@ end
 module Leader = struct
   module Replica = struct
     type t =
-      { where_to_connect   : Host_and_port.t
+      { where_to_connect : Host_and_port.t
       ; replication_offset : int
       }
     [@@deriving sexp_of, compare]
@@ -72,7 +72,7 @@ module Leader = struct
 
   type t =
     { replication_offset : int
-    ; replicas           : Replica.t list
+    ; replicas : Replica.t list
     }
   [@@deriving sexp_of, compare]
 
@@ -99,8 +99,8 @@ module Sentinel = struct
       let l = Array.to_list leader_names in
       let leader_names, other =
         List.partition_map l ~f:(function
-          | Resp3.String s -> Either.First  s
-          | other          -> Either.Second other)
+          | Resp3.String s -> Either.First s
+          | other -> Either.Second other)
       in
       if not (List.is_empty other)
       then
@@ -116,8 +116,8 @@ module Sentinel = struct
 end
 
 type t =
-  | Leader   of Leader.t
-  | Replica  of Replica.t
+  | Leader of Leader.t
+  | Replica of Replica.t
   | Sentinel of Sentinel.t
 [@@deriving sexp_of, compare]
 
@@ -145,7 +145,7 @@ module For_testing = struct
   let zero_ports (r : t) =
     match r with
     | Sentinel s -> Sentinel s
-    | Leader l   ->
+    | Leader l ->
       let replicas =
         List.map l.replicas ~f:(fun r ->
           { r with where_to_connect = zero_port r.where_to_connect })

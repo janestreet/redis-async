@@ -1,14 +1,14 @@
 open! Core
-module Bulk_io   = Bulk_io
-module Resp3     = Resp3
+module Bulk_io = Bulk_io
+module Resp3 = Resp3
 module Key_event = Key_event
-module Cursor    = Cursor
-module Role      = Role
-module Auth      = Auth
+module Cursor = Cursor
+module Role = Role
+module Auth = Auth
 module Stream_id = Stream_id
-module Consumer  = Consumer
-module Group     = Group
-module Sha1      = Sha1
+module Consumer = Consumer
+module Group = Group
+module Sha1 = Sha1
 
 module type S = Redis_intf.S
 

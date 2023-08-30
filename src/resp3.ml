@@ -11,16 +11,16 @@
 open Core
 
 type t =
-  | String  of string
-  | Error   of string
-  | Int     of int
+  | String of string
+  | Error of string
+  | Int of int
   | Null
-  | Double  of float
+  | Double of float
   | Boolean of bool
-  | Bignum  of Bignum.t
-  | Array   of t array
-  | Map     of (t * t) array
-  | Set     of t array
+  | Bignum of Bignum.t
+  | Array of t array
+  | Map of (t * t) array
+  | Set of t array
 [@@deriving compare, equal, sexp_of]
 
 exception Termination_not_found
@@ -75,8 +75,7 @@ and blob_string buf =
   expect_crlf buf;
   str
 
-and number buf =
-  Int.of_string (simple_string buf)
+and number buf = Int.of_string (simple_string buf)
 
 and null buf =
   expect_crlf buf;
@@ -90,7 +89,7 @@ and boolean buf =
     match observed with
     | 't' -> true
     | 'f' -> false
-    | _   ->
+    | _ ->
       raise (Protocol_error (sprintf "Expected 't' or 'f' but observed '%c'" observed))
   in
   expect_crlf buf;
@@ -111,24 +110,24 @@ and map buf =
 
 and parse_exn buf =
   match consume_char buf with
-  | '$' -> String  (blob_string buf)
-  | '+' -> String  (simple_string buf)
-  | '-' -> Error   (simple_string buf)
-  | ':' -> Int     (number buf)
-  | '_' -> null    buf
-  | ',' -> Double  (double buf)
+  | '$' -> String (blob_string buf)
+  | '+' -> String (simple_string buf)
+  | '-' -> Error (simple_string buf)
+  | ':' -> Int (number buf)
+  | '_' -> null buf
+  | ',' -> Double (double buf)
   | '#' -> Boolean (boolean buf)
-  | '!' -> Error   (blob_string buf)
-  | '=' -> String  (blob_string buf)
-  | '(' -> Bignum  (big_number buf)
-  | '*' -> Array   (array buf)
-  | '%' -> Map     (map buf)
-  | '~' -> Set     (array buf)
-  | c   -> raise   (Protocol_error (sprintf "Unknown message type '%c'" c))
+  | '!' -> Error (blob_string buf)
+  | '=' -> String (blob_string buf)
+  | '(' -> Bignum (big_number buf)
+  | '*' -> Array (array buf)
+  | '%' -> Map (map buf)
+  | '~' -> Set (array buf)
+  | c -> raise (Protocol_error (sprintf "Unknown message type '%c'" c))
 ;;
 
 let extract_error buf =
   match parse_exn buf with
-  | Error err  -> Error.of_string err
+  | Error err -> Error.of_string err
   | unexpected -> Error.createf !"Unexpected response: %{sexp#mach:t}" unexpected
 ;;

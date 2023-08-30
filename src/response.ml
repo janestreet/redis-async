@@ -5,8 +5,8 @@ let create (type a) (parse : (read, Iobuf.seek) Iobuf.t -> a Or_error.t) =
   (module struct
     type t = a
 
-    let this  : a Or_error.t Ivar.t = Ivar.create ()
-    let parse buf                   = parse (Iobuf.read_only buf)
+    let this : a Or_error.t Ivar.t = Ivar.create ()
+    let parse buf = parse (Iobuf.read_only buf)
   end : Response_intf.S
     with type t = a)
 ;;
@@ -21,7 +21,7 @@ let create_ok () =
   create (fun buf ->
     match Resp3.parse_exn buf with
     | String "OK" -> Ok ()
-    | other       -> handle_unexpected_response ~expected:"Ok" other)
+    | other -> handle_unexpected_response ~expected:"Ok" other)
 ;;
 
 let create_int () =
@@ -34,17 +34,17 @@ let create_int () =
 let create_float_option () =
   create (fun buf ->
     match Resp3.parse_exn buf with
-    | Null     -> Ok None
+    | Null -> Ok None
     | Double d -> Ok (Some d)
-    | other    -> handle_unexpected_response ~expected:"double" other)
+    | other -> handle_unexpected_response ~expected:"double" other)
 ;;
 
 let create_resp3 () = create (fun buf -> Ok (Resp3.parse_exn buf))
 
 let parse_01_bool = function
   | Resp3.Int 0 -> Ok false
-  | Int 1       -> Ok true
-  | other       -> handle_unexpected_response ~expected:"bool" other
+  | Int 1 -> Ok true
+  | other -> handle_unexpected_response ~expected:"bool" other
 ;;
 
 let create_01_bool () = create (fun buf -> Resp3.parse_exn buf |> parse_01_bool)
@@ -86,7 +86,7 @@ let create_string () =
   create (fun buf ->
     match Resp3.parse_exn buf with
     | String s -> Ok s
-    | other    -> handle_unexpected_response ~expected:"string" other)
+    | other -> handle_unexpected_response ~expected:"string" other)
 ;;
 
 let create_string_list () =
@@ -96,7 +96,7 @@ let create_string_list () =
       let%map.Or_error result =
         Array.fold_result array ~init:[] ~f:(fun acc -> function
           | String str -> Ok (str :: acc)
-          | other      -> handle_unexpected_response ~expected:"string list" other)
+          | other -> handle_unexpected_response ~expected:"string list" other)
       in
       List.rev result
     | other -> handle_unexpected_response ~expected:"string list" other)
@@ -120,6 +120,6 @@ let create_string_map () =
       Array.fold_result pairs ~init:String.Map.empty ~f:(fun acc pair ->
         match pair with
         | String key, data -> Map.set acc ~key ~data |> Or_error.return
-        | other, _         -> handle_unexpected_response ~expected:"string key" other)
+        | other, _ -> handle_unexpected_response ~expected:"string key" other)
     | other -> handle_unexpected_response ~expected:"string map" other)
 ;;

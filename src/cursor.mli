@@ -4,7 +4,7 @@ open Core
 
 type t [@@deriving equal, sexp_of]
 
-val zero  : t
+val zero : t
 val ( = ) : t -> t -> bool
 
 include Stringable.S with type t := t

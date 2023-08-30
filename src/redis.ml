@@ -2,42 +2,42 @@ open Core
 open Async
 open Common
 open Deferred.Or_error.Let_syntax
-module Bulk_io   = Bulk_io
-module Resp3     = Resp3
+module Bulk_io = Bulk_io
+module Resp3 = Resp3
 module Key_event = Key_event
-module Cursor    = Cursor
-module Role      = Role
-module Auth      = Auth
+module Cursor = Cursor
+module Role = Role
+module Auth = Auth
 module Stream_id = Stream_id
-module Consumer  = Consumer
-module Group     = Group
-module Sha1      = Sha1
+module Consumer = Consumer
+module Group = Group
+module Sha1 = Sha1
 
 module type S = Redis_intf.S
 
 module Make_field (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_intf.S) =
 struct
-  module Key   = Key
+  module Key = Key
   module Field = Field
   module Value = Value
   include Client.Make (Key) (Field) (Value)
 
   type t = Key.t Client.t
 
-  let select   t index = command_string t [ "SELECT"; itoa index ] (Response.create_ok ())
-  let flushall t       = command_string t [ "FLUSHALL"           ] (Response.create_ok ())
-  let flushdb  t       = command_string t [ "FLUSHDB"            ] (Response.create_ok ())
-  let shutdown t       = command_string t [ "SHUTDOWN"           ] (Response.create_ok ())
+  let select t index = command_string t [ "SELECT"; itoa index ] (Response.create_ok ())
+  let flushall t = command_string t [ "FLUSHALL" ] (Response.create_ok ())
+  let flushdb t = command_string t [ "FLUSHDB" ] (Response.create_ok ())
+  let shutdown t = command_string t [ "SHUTDOWN" ] (Response.create_ok ())
 
   let unlink t keys =
     command_key t ~result_of_empty_input:(Ok 0) [ "UNLINK" ] keys (Response.create_int ())
   ;;
 
-  let dbsize t      = command_string t [ "DBSIZE" ] (Response.create_int ())
+  let dbsize t = command_string t [ "DBSIZE" ] (Response.create_int ())
   let exists t keys = command_key t [ "EXISTS" ] keys (Response.create_int ())
-  let echo   t k    = command_key t [ "ECHO" ] [ k ] (Response.create Key_parser.single)
-  let ping   t arg  = command_string t [ "PING"; arg ] (Response.create_string ())
-  let incr   t k    = command_key t [ "INCR" ] [ k ] (Response.create_int ())
+  let echo t k = command_key t [ "ECHO" ] [ k ] (Response.create Key_parser.single)
+  let ping t arg = command_string t [ "PING"; arg ] (Response.create_string ())
+  let incr t k = command_key t [ "INCR" ] [ k ] (Response.create_int ())
 
   let del t keys =
     command_key t ~result_of_empty_input:(Ok 0) [ "DEL" ] keys (Response.create_int ())
@@ -54,12 +54,12 @@ struct
   let scan t ~cursor ?count ?pattern () =
     let count =
       match count with
-      | None       -> []
+      | None -> []
       | Some count -> [ "COUNT"; itoa count ]
     in
     let pattern =
       match pattern with
-      | None         -> []
+      | None -> []
       | Some pattern -> [ "MATCH"; pattern ]
     in
     command_string
@@ -71,7 +71,7 @@ struct
   let set t k ?expire v =
     let args =
       match expire with
-      | None        -> []
+      | None -> []
       | Some expire -> [ "PX"; Int.to_string (Time_ns.Span.to_int_ms expire) ]
     in
     command_kv t [ "SET" ] [ k, v ] args (Response.create_ok ())
@@ -113,7 +113,7 @@ struct
     match%map command_key t [ "PTTL" ] [ key ] (Response.create_int ()) with
     | -2 -> `No_key
     | -1 -> `No_timeout
-    | n  -> `Timeout (Time_ns.Span.of_int_ms n)
+    | n -> `Timeout (Time_ns.Span.of_int_ms n)
   ;;
 
   let msetnx t kvs =
@@ -172,7 +172,7 @@ struct
       t
       ~result_of_empty_input:(Ok 0)
       [ "SADD" ]
-      [ key    ]
+      [ key ]
       values
       (Response.create_int ())
   ;;
@@ -288,9 +288,9 @@ struct
     command_key t [ "HGETALL" ] [ k ] (Response.create Field_value_map_parser.map)
   ;;
 
-  let hkeys t k = command_key t [ "HKEYS" ] [ k ] (Response.create     Field_parser.list)
-  let hlen  t k = command_key t [ "HLEN"  ] [ k ] (Response.create_int ()               )
-  let hvals t k = command_key t [ "HVALS" ] [ k ] (Response.create     Value_parser.list)
+  let hkeys t k = command_key t [ "HKEYS" ] [ k ] (Response.create Field_parser.list)
+  let hlen t k = command_key t [ "HLEN" ] [ k ] (Response.create_int ())
+  let hvals t k = command_key t [ "HVALS" ] [ k ] (Response.create Value_parser.list)
 
   let hdel t k fs =
     command_keys_fields
@@ -305,7 +305,7 @@ struct
   let hscan t ~cursor ?count k =
     let count =
       match count with
-      | None       -> []
+      | None -> []
       | Some count -> [ "COUNT"; itoa count ]
     in
     command_keys_string_args
@@ -321,12 +321,12 @@ struct
   ;;
 
   let keyevent_configuration : Key_event.t -> char = function
-    | `del     -> 'g'
-    | `expire  -> 'g'
-    | `new_    -> 'n'
+    | `del -> 'g'
+    | `expire -> 'g'
+    | `new_ -> 'n'
     | `expired -> 'x'
-    | `set     -> '$'
-    | `hset    -> 'h'
+    | `set -> '$'
+    | `hset -> 'h'
   ;;
 
   let keyspace_setup t category events =
@@ -376,8 +376,8 @@ struct
       subscribe_raw
         t
         (`Literal
-           (List.map events ~f:(fun event ->
-              "__keyevent@0__:" ^ Key_event.to_string (event :> Key_event.t))))
+          (List.map events ~f:(fun event ->
+             "__keyevent@0__:" ^ Key_event.to_string (event :> Key_event.t))))
         ~consume:(fun buf ~subscription ->
           String.drop_prefix subscription 15, Or_error.ok_exn (Key_parser.single buf))
     in
@@ -385,8 +385,8 @@ struct
   ;;
 
   let keyspace_notifications t events targets =
-    let keyspace_prefix        = "__keyspace@0__:" in
-    let keyspace_prefix_length = 15                in
+    let keyspace_prefix = "__keyspace@0__:" in
+    let keyspace_prefix_length = 15 in
     let%bind lookup = keyspace_setup t 'K' events in
     let targets =
       match targets with
@@ -464,13 +464,13 @@ struct
   ;;
 
   let acl_deluser t = function
-    | []        -> return 0
+    | [] -> return 0
     | usernames ->
       command_string t ("ACL" :: "DELUSER" :: usernames) (Response.create_int ())
   ;;
 
   let acl_users t = command_string t [ "ACL"; "USERS" ] (Response.create_string_list ())
-  let acl_list  t = command_string t [ "ACL"; "LIST"  ] (Response.create_string_list ())
+  let acl_list t = command_string t [ "ACL"; "LIST" ] (Response.create_string_list ())
 
   let acl_getuser t ~username =
     command_string t [ "ACL"; "GETUSER"; username ] (Response.create_resp3 ())
@@ -525,8 +525,8 @@ struct
       let len = Resp3.number buf in
       let result =
         List.init len ~f:(fun _ ->
-          let%bind.Or_error key             = Key_parser.single buf     in
-          let%map.Or_error  stream_response = parse_stream_response buf in
+          let%bind.Or_error key = Key_parser.single buf in
+          let%map.Or_error stream_response = parse_stream_response buf in
           key, stream_response)
       in
       (* Or_error.all reverses the list! *)
@@ -553,7 +553,7 @@ struct
     let args =
       Group.to_string group
       :: Option.value_map stream_id ~default:"$" ~f:Stream_id.to_string
-      :: List.filter_opt  [ Option.map mkstream ~f:(fun () -> "MKSTREAM") ]
+      :: List.filter_opt [ Option.map mkstream ~f:(fun () -> "MKSTREAM") ]
     in
     match%map.Deferred
       command_keys_string_args
@@ -572,16 +572,16 @@ struct
 
   let xrange t key ?start ?end_ ?count () =
     let start = Option.value_map start ~default:"-" ~f:Stream_id.to_string in
-    let end_  = Option.value_map end_  ~default:"+" ~f:Stream_id.to_string in
+    let end_ = Option.value_map end_ ~default:"+" ~f:Stream_id.to_string in
     let args =
       match count with
-      | None       -> [ start; end_ ]
+      | None -> [ start; end_ ]
       | Some count -> [ start; end_; "COUNT"; Int.to_string count ]
     in
     command_keys_string_args
       t
       [ "XRANGE" ]
-      [ key      ]
+      [ key ]
       args
       (Response.create parse_stream_response)
   ;;
@@ -594,7 +594,7 @@ struct
     let block =
       match block with
       | `Don't_block -> []
-      | `Forever     -> [ "BLOCK"; "0" ]
+      | `Forever -> [ "BLOCK"; "0" ]
       | `For_up_to block -> [ "BLOCK"; Int.to_string (Time_ns.Span.to_int_ms block) ]
     in
     command_keys_string_args
@@ -613,13 +613,13 @@ struct
     =
     let idle =
       match idle with
-      | None      -> []
+      | None -> []
       | Some idle -> [ "IDLE"; Int.to_string (Time_ns.Span.to_int_ms idle) ]
     in
     command_keys_string_args
       t
       [ "XCLAIM" ]
-      [ key      ]
+      [ key ]
       ([ Group.to_string group
        ; Consumer.to_string consumer
        ; Int.to_string (Time_ns.Span.to_int_ms min_idle_time)
@@ -684,7 +684,7 @@ struct
     command_keys_string_args
       t
       [ "XACK" ]
-      [ key    ]
+      [ key ]
       (Group.to_string group :: List.map ids ~f:Stream_id.to_string)
       (Response.create_int ())
   ;;

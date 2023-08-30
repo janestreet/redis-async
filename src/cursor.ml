@@ -5,7 +5,7 @@ open Core
 
 type t = string [@@deriving equal, sexp_of]
 
-let zero      = "0"
+let zero = "0"
 let of_string = Fn.id
 let to_string = Fn.id
-let ( = )     = equal
+let ( = ) = equal

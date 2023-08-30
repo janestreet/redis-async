@@ -1,7 +1,7 @@
 open! Core
-open  Async
-open  Redis
-open  Deferred.Or_error.Let_syntax
+open Async
+open Redis
+open Deferred.Or_error.Let_syntax
 module Expect_test_config = Expect_test_config_or_error
 module R = Redis.Make (Bulk_io.String) (Bulk_io.String)
 
@@ -11,7 +11,7 @@ let with_sandbox f =
 ;;
 
 let print_error = function
-  | Ok    _ -> raise_s [%message "Error expected"]
+  | Ok _ -> raise_s [%message "Error expected"]
   | Error e -> print_s ([%sexp_of: Error.t] e)
 ;;
 
@@ -31,12 +31,12 @@ let%expect_test "Roles" =
     (Leader
      ((replication_offset 41)
       (replicas (((where_to_connect (127.0.0.1 0)) (replication_offset 0)))))) |}];
-  let%bind          _, where_to_connect = Sandbox.where_to_connect_sentinel () in
-  let%bind          r                   = R.create ~where_to_connect ()        in
-  let%bind          ()                  = print_role r                         in
+  let%bind _, where_to_connect = Sandbox.where_to_connect_sentinel () in
+  let%bind r = R.create ~where_to_connect () in
+  let%bind () = print_role r in
   [%expect {|
     (Sentinel (test)) |}];
-  let%bind.Deferred ()                  = R.close r                            in
+  let%bind.Deferred () = R.close r in
   Deferred.Or_error.ok_unit
 ;;
 
@@ -44,8 +44,8 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
   with_sandbox (fun r ->
     let%bind response = R.exists r [ "hello" ] in
     [%test_eq: int] response 0;
-    let%bind ()       = R.set r "hello" "world" in
-    let%bind response = R.exists r [ "hello" ]  in
+    let%bind () = R.set r "hello" "world" in
+    let%bind response = R.exists r [ "hello" ] in
     [%test_eq: int] response 1;
     let%bind response = R.dbsize r in
     [%test_eq: int] response 1;
@@ -55,9 +55,9 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
     let%bind response = R.get r "bork" in
     print_s ([%sexp_of: string option] response);
     [%expect {| () |}];
-    let%bind () = R.select r 1                              in
+    let%bind () = R.select r 1 in
     let%bind () = R.mset r [ "a", "b"; "c", "d"; "e", "f" ] in
-    let%bind response = R.del r [ "c"; "g" ]                in
+    let%bind response = R.del r [ "c"; "g" ] in
     print_s ([%sexp_of: int] response);
     [%expect {|
        1 |}];
@@ -86,7 +86,7 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
     print_s [%sexp (response : string option list)];
     [%expect {| ((bar) (foobaz)) |}];
     (* Special case for empty variadic inputs *)
-    let%bind ()       = R.mset   r [] in
+    let%bind () = R.mset r [] in
     let%bind response = R.msetnx r [] in
     [%test_eq: bool] response true;
     let%bind response = R.mget r [] in
@@ -94,7 +94,7 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
     let%bind response = R.del r [] in
     [%test_eq: int] response 0;
     let%bind cursor, scan0 = R.scan r ~cursor:Cursor.zero ~count:1 () in
-    let%bind cursor, scan1 = R.scan r ~cursor ()                      in
+    let%bind cursor, scan1 = R.scan r ~cursor () in
     (* The SCAN test is written to show summary results because this command is
        intentionally non-deterministic (see documentation) *)
     print_s
@@ -111,9 +111,9 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
       print_endline
         (match response with
          (* Don't print the timeout value to make tests deterministic *)
-         | `Timeout _  -> "Timeout"
+         | `Timeout _ -> "Timeout"
          | `No_timeout -> "No_timeout"
-         | `No_key     -> "No_key")
+         | `No_key -> "No_key")
     in
     let%bind response = R.pttl r "has expire" in
     print_timeout_opaque response;
@@ -157,7 +157,7 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
 let%expect_test "Command: keys" =
   with_sandbox (fun r ->
     let%bind () = R.mset r [ "a", "b"; "c", "d"; "e", "f"; "foo", "g"; "foobar", "h" ] in
-    let%bind response = R.keys r >>| List.sort ~compare:String.compare                 in
+    let%bind response = R.keys r >>| List.sort ~compare:String.compare in
     print_s ([%sexp_of: string list] response);
     [%expect {| (a c e foo foobar) |}];
     let%bind response = R.keys r ~pattern:"foo*" >>| List.sort ~compare:String.compare in
@@ -330,9 +330,9 @@ let%expect_test "hash commands" =
       Deferred.Or_error.repeat_until_finished
         (Cursor.zero (* cursor *), [] (* values *))
         (fun (cursor, values) ->
-           let%map cursor, new_values = R.hscan r ~cursor ~count:2 key_1 in
-           let values = values @ new_values in
-           if Cursor.(cursor = zero) then `Finished values else `Repeat (cursor, values))
+        let%map cursor, new_values = R.hscan r ~cursor ~count:2 key_1 in
+        let values = values @ new_values in
+        if Cursor.(cursor = zero) then `Finished values else `Repeat (cursor, values))
       >>| List.dedup_and_sort ~compare:[%compare: string * string]
     in
     [%test_eq: (string * string) list] response values;
@@ -373,7 +373,7 @@ let%expect_test "Bin_prot" =
   let module Value = struct
     module T = struct
       type t =
-        { color  : string
+        { color : string
         ; number : int
         }
       [@@deriving bin_io, sexp_of]
@@ -389,14 +389,14 @@ let%expect_test "Bin_prot" =
   end
   in
   let module R = Redis.Make (Key) (Value) in
-  let%bind where_to_connect, _ = Sandbox.where_to_connect ()                        in
-  let%bind r = R.create ~where_to_connect ()                                        in
+  let%bind where_to_connect, _ = Sandbox.where_to_connect () in
+  let%bind r = R.create ~where_to_connect () in
   let%bind () = R.set r { Key.msg = "hello" } { Value.color = "blue"; number = 42 } in
-  let%bind response = R.get r { Key.msg = "hello" }                                 in
+  let%bind response = R.get r { Key.msg = "hello" } in
   print_s ([%sexp_of: Value.t option] response);
   [%expect {| (((color blue) (number 42))) |}];
   let module Redis_with_too_small_value = Redis.Make (Key) (Int_value) in
-  let%bind          r        = Redis_with_too_small_value.create ~where_to_connect () in
+  let%bind r = Redis_with_too_small_value.create ~where_to_connect () in
   let%bind.Deferred response = Redis_with_too_small_value.get r { Key.msg = "hello" } in
   print_s ([%sexp_of: int option Or_error.t] response);
   [%expect {| (Error "Bin_prot should have read 6 bytes but read 1") |}];
@@ -410,7 +410,7 @@ let%expect_test "Bin_prot" =
   end
   in
   let module Redis_with_wrong_value = Redis.Make (Key) (Wrong_value) in
-  let%bind          r        = Redis_with_wrong_value.create ~where_to_connect () in
+  let%bind r = Redis_with_wrong_value.create ~where_to_connect () in
   let%bind.Deferred response = Redis_with_wrong_value.get r { Key.msg = "hello" } in
   print_s ([%sexp_of: Wrong_value.t option Or_error.t] response);
   [%expect {| (Error (common.ml.Read_error Variant_tag 4)) |}];
@@ -418,10 +418,10 @@ let%expect_test "Bin_prot" =
 ;;
 
 let%expect_test "Invalidation" =
-  let%bind where_to_connect, _ = Sandbox.where_to_connect   () in
-  let%bind reader              = R.create ~where_to_connect () in
-  let%bind writer              = R.create ~where_to_connect () in
-  let%bind invalidation        = R.client_tracking reader   () in
+  let%bind where_to_connect, _ = Sandbox.where_to_connect () in
+  let%bind reader = R.create ~where_to_connect () in
+  let%bind writer = R.create ~where_to_connect () in
+  let%bind invalidation = R.client_tracking reader () in
   let expect_invalidation () =
     let%map.Deferred result = Pipe.read invalidation in
     Ok (print_s ([%sexp_of: [ `Ok of [ `All | `Key of string ] | `Eof ]] result))
@@ -430,12 +430,12 @@ let%expect_test "Invalidation" =
   print_s ([%sexp_of: string option] response);
   [%expect {| () |}];
   let%bind () = R.set writer "hello" "world" in
-  let%bind () = expect_invalidation ()       in
+  let%bind () = expect_invalidation () in
   [%expect {| (Ok (Key hello)) |}];
-  let%bind () = R.flushall writer      in
+  let%bind () = R.flushall writer in
   let%bind () = expect_invalidation () in
   [%expect {| (Ok All) |}];
-  let%bind () = R.flushdb reader       in
+  let%bind () = R.flushdb reader in
   let%bind () = expect_invalidation () in
   [%expect {| (Ok All) |}];
   Pipe.close_read invalidation;
@@ -443,19 +443,19 @@ let%expect_test "Invalidation" =
 ;;
 
 let%expect_test "Broadcast invalidation" =
-  let%bind where_to_connect, _ = Sandbox.where_to_connect             () in
-  let%bind reader              = R.create ~where_to_connect           () in
-  let%bind writer              = R.create ~where_to_connect           () in
-  let%bind invalidation        = R.client_tracking ~bcast:true reader () in
+  let%bind where_to_connect, _ = Sandbox.where_to_connect () in
+  let%bind reader = R.create ~where_to_connect () in
+  let%bind writer = R.create ~where_to_connect () in
+  let%bind invalidation = R.client_tracking ~bcast:true reader () in
   let expect_invalidation () =
     let%map.Deferred result = Pipe.read invalidation in
     Ok (print_s ([%sexp_of: [ `Ok of [ `All | `Key of string ] | `Eof ]] result))
   in
   let%bind () = R.set writer "hello" "world" in
   (* Reader receives bcast invalidation without first requesting any keys *)
-  let%bind () = expect_invalidation ()       in
+  let%bind () = expect_invalidation () in
   [%expect {| (Ok (Key hello)) |}];
-  let%bind () = R.flushall writer      in
+  let%bind () = R.flushall writer in
   let%bind () = expect_invalidation () in
   [%expect {| (Ok All) |}];
   Pipe.close_read invalidation;
@@ -499,8 +499,8 @@ end
 
 let%expect_test "pub/sub" =
   with_sandbox (fun r ->
-    let%bind reader   = R.subscribe  r [ "foo"; "bar" ] in
-    let%bind p_reader = R.psubscribe r [ "f*"         ] in
+    let%bind reader = R.subscribe r [ "foo"; "bar" ] in
+    let%bind p_reader = R.psubscribe r [ "f*" ] in
     let p () =
       print_s
         [%message
@@ -531,7 +531,7 @@ let%expect_test "pub/sub" =
 let%expect_test "subscribing to the same channel twice at the same time works" =
   with_sandbox (fun r ->
     let%bind _s1 = R.subscribe r [ "foo" ]
-    and      _s2 = R.subscribe r [ "foo" ] in
+    and _s2 = R.subscribe r [ "foo" ] in
     return ())
 ;;
 
@@ -541,21 +541,21 @@ let get_subscriptions r =
   | Array array ->
     Array.map array ~f:(function
       | String str -> str
-      | resp3      -> raise_s [%message "Unexpected resp3 channel" (resp3 : Resp3.t)])
+      | resp3 -> raise_s [%message "Unexpected resp3 channel" (resp3 : Resp3.t)])
     |> String.Set.of_array
   | resp3 -> raise_s [%message "Unexpected resp3 response" (resp3 : Resp3.t)]
 ;;
 
 let%expect_test "unsubscribing works" =
   with_sandbox (fun r ->
-    let%bind subscription  = R.subscribe       r [ "foo" ] in
-    let%bind subscriptions = get_subscriptions r           in
+    let%bind subscription = R.subscribe r [ "foo" ] in
+    let%bind subscriptions = get_subscriptions r in
     print_s [%sexp (subscriptions : String.Set.t)];
     [%expect {| (__sentinel__:hello foo) |}];
     Pipe.close_read subscription;
-    let%bind.Deferred ()            = Scheduler.yield_until_no_jobs_remain () in
-    let%bind          _             = R.ping r "foo"                          in
-    let%bind          subscriptions = get_subscriptions r                     in
+    let%bind.Deferred () = Scheduler.yield_until_no_jobs_remain () in
+    let%bind _ = R.ping r "foo" in
+    let%bind subscriptions = get_subscriptions r in
     print_s [%sexp (subscriptions : String.Set.t)];
     [%expect {| (__sentinel__:hello) |}];
     return ())
@@ -563,21 +563,21 @@ let%expect_test "unsubscribing works" =
 
 let%expect_test "don't unsubscribe if another subscription is active" =
   with_sandbox (fun r ->
-    let%bind subscription        = R.subscribe r [ "foo" ] in
+    let%bind subscription = R.subscribe r [ "foo" ] in
     let%bind active_subscription = R.subscribe r [ "foo" ] in
-    let%bind subscriptions       = get_subscriptions r     in
+    let%bind subscriptions = get_subscriptions r in
     print_s [%sexp (subscriptions : String.Set.t)];
     [%expect {| (__sentinel__:hello foo) |}];
     Pipe.close_read subscription;
-    let%bind.Deferred ()            = Scheduler.yield_until_no_jobs_remain () in
-    let%bind          _             = R.ping r "foo"                          in
-    let%bind          subscriptions = get_subscriptions r                     in
+    let%bind.Deferred () = Scheduler.yield_until_no_jobs_remain () in
+    let%bind _ = R.ping r "foo" in
+    let%bind subscriptions = get_subscriptions r in
     print_s [%sexp (subscriptions : String.Set.t)];
     [%expect {| (__sentinel__:hello foo) |}];
     Pipe.close_read active_subscription;
-    let%bind.Deferred ()            = Scheduler.yield_until_no_jobs_remain () in
-    let%bind          _             = R.ping r "foo"                          in
-    let%bind          subscriptions = get_subscriptions r                     in
+    let%bind.Deferred () = Scheduler.yield_until_no_jobs_remain () in
+    let%bind _ = R.ping r "foo" in
+    let%bind subscriptions = get_subscriptions r in
     print_s [%sexp (subscriptions : String.Set.t)];
     [%expect {| (__sentinel__:hello) |}];
     return ())
@@ -585,8 +585,8 @@ let%expect_test "don't unsubscribe if another subscription is active" =
 
 let%expect_test "an unsubscribe and a resubscribe should maintain the subscription" =
   with_sandbox (fun r ->
-    let%bind subscription  = R.subscribe       r [ "foo" ] in
-    let%bind subscriptions = get_subscriptions r           in
+    let%bind subscription = R.subscribe r [ "foo" ] in
+    let%bind subscriptions = get_subscriptions r in
     print_s [%sexp (subscriptions : String.Set.t)];
     [%expect {| (__sentinel__:hello foo) |}];
     Pipe.close_read subscription;
@@ -594,9 +594,9 @@ let%expect_test "an unsubscribe and a resubscribe should maintain the subscripti
        the unsubscription getting initiated but not finished before
        the second subscription occurs.
     *)
-    let%bind.Deferred ()            = Scheduler.yield ()      in
-    let%bind          _s            = R.subscribe r [ "foo" ] in
-    let%bind          subscriptions = get_subscriptions r     in
+    let%bind.Deferred () = Scheduler.yield () in
+    let%bind _s = R.subscribe r [ "foo" ] in
+    let%bind subscriptions = get_subscriptions r in
     print_s [%sexp (subscriptions : String.Set.t)];
     [%expect {| (__sentinel__:hello foo) |}];
     return ())
@@ -613,14 +613,14 @@ let%expect_test "punsubscribing works" =
     let%bind n = get_number_of_pattern_subscriptions r in
     print_s [%sexp (n : int)];
     [%expect {| 0 |}];
-    let%bind subscription = R.psubscribe r [ "foo" ]              in
-    let%bind n            = get_number_of_pattern_subscriptions r in
+    let%bind subscription = R.psubscribe r [ "foo" ] in
+    let%bind n = get_number_of_pattern_subscriptions r in
     print_s [%sexp (n : int)];
     [%expect {| 1 |}];
     Pipe.close_read subscription;
     let%bind.Deferred () = Scheduler.yield_until_no_jobs_remain () in
-    let%bind          _  = R.ping r "foo"                          in
-    let%bind          n  = get_number_of_pattern_subscriptions r   in
+    let%bind _ = R.ping r "foo" in
+    let%bind n = get_number_of_pattern_subscriptions r in
     print_s [%sexp (n : int)];
     [%expect {| 0 |}];
     return ())
@@ -630,8 +630,8 @@ let%expect_test "subscribing to the duplicate channels in one invocation causes 
                  duplicate data"
   =
   with_sandbox (fun r ->
-    let%bind s1        = R.subscribe r [ "foo"; "foo" ] in
-    let%bind (_ : int) = R.publish r "foo" "bar"        in
+    let%bind s1 = R.subscribe r [ "foo"; "foo" ] in
+    let%bind (_ : int) = R.publish r "foo" "bar" in
     let%bind values =
       match%bind.Deferred Pipe.read_exactly s1 ~num_values:2 with
       | `Exactly queue -> Queue.to_list queue |> return
@@ -666,22 +666,22 @@ let%expect_test "keyspace notifications" =
     p ();
     [%expect {| ((keyevent Nothing_available) (keyspace Nothing_available)) |}];
     let%bind () = R.mset r [ "foo", "hello"; "bar", "baz" ] in
-    let%bind _  = R.del r [ "foo"; "was never set"; "bar" ] in
-    let%bind _  = R.echo r "wait for a round trip"          in
+    let%bind _ = R.del r [ "foo"; "was never set"; "bar" ] in
+    let%bind _ = R.echo r "wait for a round trip" in
     p ();
     [%expect {| ((keyevent (Ok ((del foo) (del bar)))) (keyspace (Ok ((del foo))))) |}];
     let%bind _ = R.set r "foo" "back again" ~expire:Time_ns.Span.millisecond in
-    let%bind _ = R.echo r "wait for a round trip"                            in
+    let%bind _ = R.echo r "wait for a round trip" in
     (* expire, and not expired, happens when expiry is set *)
     p ();
     [%expect {| ((keyevent (Ok ((expire foo)))) (keyspace Nothing_available)) |}];
     let%bind.Deferred () = Clock_ns.after (Time_ns.Span.of_int_ms 10) in
     (* get has a side effect of forcing expiry evaluation *)
-    let%bind          _  = R.get r "foo"                              in
-    let%bind          _  = R.echo r "wait for a round trip"           in
+    let%bind _ = R.get r "foo" in
+    let%bind _ = R.echo r "wait for a round trip" in
     p ();
     [%expect {| ((keyevent (Ok ((expired foo)))) (keyspace Nothing_available)) |}];
-    let%bind _ = R.hset r "foo" [ "a", "a" ]      in
+    let%bind _ = R.hset r "foo" [ "a", "a" ] in
     let%bind _ = R.echo r "wait for a round trip" in
     p ();
     [%expect {| ((keyevent (Ok ((hset foo)))) (keyspace Nothing_available)) |}];
@@ -701,7 +701,7 @@ let%expect_test "keyspace notifications with specific keys" =
     p ();
     [%expect {| (keyspace Nothing_available) |}];
     let%bind () = R.mset r [ "f*", "hey"; "foo", "bar"; "bar", "baz" ] in
-    let%bind _  = R.echo r "wait for a round trip"                     in
+    let%bind _ = R.echo r "wait for a round trip" in
     p ();
     [%expect {| (keyspace (Ok ((set f*) (set bar)))) |}];
     return ())
@@ -718,27 +718,27 @@ let%expect_test "scripting" =
 
 let%expect_test "authentication" =
   with_sandbox (fun r ->
-    let password = "notSOs3cret"                     in
-    let username = "username"                        in
-    let auth     = { Redis.Auth.username; password } in
+    let password = "notSOs3cret" in
+    let username = "username" in
+    let auth = { Redis.Auth.username; password } in
     (* rule where only this user can run all commands on two keys *)
     let rules =
       [ "on"; sprintf ">%s" password; "~foo"; "&foo"; "~foo-set"; "&foo-set"; "+@all" ]
     in
-    let%bind          ()    = R.acl_setuser r ~username ~rules              in
+    let%bind () = R.acl_setuser r ~username ~rules in
     (* sane error when we provide the wrong pwd *)
     let%bind.Deferred error = R.auth r ~auth:{ auth with password = "" } () in
     print_error error;
     [%expect {| "WRONGPASS invalid username-password pair or user is disabled." |}];
-    let%bind () = R.auth r ~auth ()    in
+    let%bind () = R.auth r ~auth () in
     (* check no error when user has permissions to access key *)
-    let%bind () = R.set  r "foo" "bar" in
-    let%bind response = R.get r "foo"  in
+    let%bind () = R.set r "foo" "bar" in
+    let%bind response = R.get r "foo" in
     print_s ([%sexp_of: string option] response);
     [%expect {| (bar) |}];
     (* check error when user does not have permissions to access key *)
-    let%bind          ()    = R.set r "foo" "bar" in
-    let%bind.Deferred error = R.get r "bar"       in
+    let%bind () = R.set r "foo" "bar" in
+    let%bind.Deferred error = R.get r "bar" in
     print_error error;
     [%expect
       {| "NOPERM this user has no permissions to access one of the keys used as arguments" |}];
@@ -802,11 +802,11 @@ let%expect_test "Streams" =
     let%bind response = R.xgroup_create r "stream" group ~mkstream:() () in
     print_s ([%sexp_of: [ `Ok | `Already_exists ]] response);
     [%expect {| Ok |}];
-    let%bind _ = R.xadd r "stream" [ "message", "apple"      ]           in
-    let%bind _ = R.xadd r "stream" [ "message", "orange"     ]           in
-    let%bind _ = R.xadd r "stream" [ "message", "strawberry" ]           in
-    let%bind _ = R.xadd r "stream" [ "message", "apricot"    ]           in
-    let%bind _ = R.xadd r "stream" [ "message", "banana"     ]           in
+    let%bind _ = R.xadd r "stream" [ "message", "apple" ] in
+    let%bind _ = R.xadd r "stream" [ "message", "orange" ] in
+    let%bind _ = R.xadd r "stream" [ "message", "strawberry" ] in
+    let%bind _ = R.xadd r "stream" [ "message", "apricot" ] in
+    let%bind _ = R.xadd r "stream" [ "message", "banana" ] in
     let%bind response = R.xgroup_create r "stream" group ~mkstream:() () in
     print_s ([%sexp_of: [ `Ok | `Already_exists ]] response);
     [%expect {| Already_exists |}];

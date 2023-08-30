@@ -1,7 +1,7 @@
 (** An ephemeral Redis instance that may be used for tests *)
 
 open! Core
-open  Async
+open Async
 
 (** Provide connection information to a sandboxed Redis leader. The server will be reset
     as part of this function call. *)
@@ -45,4 +45,4 @@ val run_sentinel
 (** Teardown the sandbox *)
 val teardown : ?on_disconnect:(unit -> unit) -> unit -> unit Deferred.Or_error.t
 
-val version  : string
+val version : string

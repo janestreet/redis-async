@@ -16,8 +16,8 @@ module Replica : sig
   end
 
   type t =
-    { leader             : Host_and_port.t
-    ; connection_state   : Connection_state.t
+    { leader : Host_and_port.t
+    ; connection_state : Connection_state.t
     ; replication_offset : int
     }
   [@@deriving sexp_of, compare]
@@ -26,7 +26,7 @@ end
 module Leader : sig
   module Replica : sig
     type t =
-      { where_to_connect   : Host_and_port.t
+      { where_to_connect : Host_and_port.t
       ; replication_offset : int
       }
     [@@deriving sexp_of, compare]
@@ -34,7 +34,7 @@ module Leader : sig
 
   type t =
     { replication_offset : int
-    ; replicas           : Replica.t list
+    ; replicas : Replica.t list
     }
   [@@deriving sexp_of, compare]
 end
@@ -45,8 +45,8 @@ module Sentinel : sig
 end
 
 type t =
-  | Leader   of Leader.t
-  | Replica  of Replica.t
+  | Leader of Leader.t
+  | Replica of Replica.t
   | Sentinel of Sentinel.t
 [@@deriving sexp_of, compare]
 

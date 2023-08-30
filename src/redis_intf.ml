@@ -5,7 +5,7 @@
 *)
 
 open! Core
-open  Async
+open Async
 
 module type S = sig
   module Key : sig
@@ -84,19 +84,19 @@ module type S = sig
     -> unit
     -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
 
-  val set        : t -> Key.t -> ?expire:Time_ns.Span.t -> Value.t -> unit Deferred.Or_error.t
-  val setnx      : t -> Key.t -> Value.t -> bool Deferred.Or_error.t
-  val mset       : t -> (Key.t * Value.t) list -> unit Deferred.Or_error.t
-  val msetnx     : t -> (Key.t * Value.t) list -> bool Deferred.Or_error.t
-  val get        : t -> Key.t -> Value.t option Deferred.Or_error.t
-  val mget       : t -> Key.t list -> Value.t option list Deferred.Or_error.t
-  val smembers   : t -> Key.t -> Value.t list Deferred.Or_error.t
-  val sismember  : t -> Key.t -> Value.t -> bool Deferred.Or_error.t
+  val set : t -> Key.t -> ?expire:Time_ns.Span.t -> Value.t -> unit Deferred.Or_error.t
+  val setnx : t -> Key.t -> Value.t -> bool Deferred.Or_error.t
+  val mset : t -> (Key.t * Value.t) list -> unit Deferred.Or_error.t
+  val msetnx : t -> (Key.t * Value.t) list -> bool Deferred.Or_error.t
+  val get : t -> Key.t -> Value.t option Deferred.Or_error.t
+  val mget : t -> Key.t list -> Value.t option list Deferred.Or_error.t
+  val smembers : t -> Key.t -> Value.t list Deferred.Or_error.t
+  val sismember : t -> Key.t -> Value.t -> bool Deferred.Or_error.t
   val smismember : t -> Key.t -> Value.t list -> bool list Deferred.Or_error.t
-  val sadd       : t -> Key.t -> Value.t list -> int Deferred.Or_error.t
-  val srem       : t -> Key.t -> Value.t list -> int Deferred.Or_error.t
-  val zadd       : t -> Key.t -> ([ `Score of float ] * Value.t) list -> int Deferred.Or_error.t
-  val zrem       : t -> Key.t -> Value.t list -> int Deferred.Or_error.t
+  val sadd : t -> Key.t -> Value.t list -> int Deferred.Or_error.t
+  val srem : t -> Key.t -> Value.t list -> int Deferred.Or_error.t
+  val zadd : t -> Key.t -> ([ `Score of float ] * Value.t) list -> int Deferred.Or_error.t
+  val zrem : t -> Key.t -> Value.t list -> int Deferred.Or_error.t
 
   val pttl
     :  t
@@ -154,15 +154,15 @@ module type S = sig
     -> max_score:float Maybe_bound.t
     -> int Deferred.Or_error.t
 
-  val hexists : t -> Key.t -> Field.t -> bool                     Deferred.Or_error.t
-  val hset    : t -> Key.t -> (Field.t * Value.t) list -> int     Deferred.Or_error.t
-  val hget    : t -> Key.t -> Field.t -> Value.t option           Deferred.Or_error.t
-  val hmget   : t -> Key.t -> Field.t list -> Value.t option list Deferred.Or_error.t
-  val hgetall : t -> Key.t -> (Field.t * Value.t) list            Deferred.Or_error.t
-  val hvals   : t -> Key.t -> Value.t list                        Deferred.Or_error.t
-  val hkeys   : t -> Key.t -> Field.t list                        Deferred.Or_error.t
-  val hlen    : t -> Key.t -> int                                 Deferred.Or_error.t
-  val hdel    : t -> Key.t -> Field.t list -> int                 Deferred.Or_error.t
+  val hexists : t -> Key.t -> Field.t -> bool Deferred.Or_error.t
+  val hset : t -> Key.t -> (Field.t * Value.t) list -> int Deferred.Or_error.t
+  val hget : t -> Key.t -> Field.t -> Value.t option Deferred.Or_error.t
+  val hmget : t -> Key.t -> Field.t list -> Value.t option list Deferred.Or_error.t
+  val hgetall : t -> Key.t -> (Field.t * Value.t) list Deferred.Or_error.t
+  val hvals : t -> Key.t -> Value.t list Deferred.Or_error.t
+  val hkeys : t -> Key.t -> Field.t list Deferred.Or_error.t
+  val hlen : t -> Key.t -> int Deferred.Or_error.t
+  val hdel : t -> Key.t -> Field.t list -> int Deferred.Or_error.t
 
   val hscan
     :  t
@@ -182,7 +182,7 @@ module type S = sig
     -> [ `Patterns of string list | `Keys of Key.t list ]
     -> ('a * Key.t) Pipe.Reader.t Deferred.Or_error.t
 
-  val publish   : t -> string -> Key.t -> int Deferred.Or_error.t
+  val publish : t -> string -> Key.t -> int Deferred.Or_error.t
   val subscribe : t -> string list -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
 
   val subscribe_raw
@@ -191,14 +191,12 @@ module type S = sig
     -> consume:((read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a)
     -> 'a Pipe.Reader.t Deferred.Or_error.t
 
-  val psubscribe  : t -> string list -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
-  val script_load : t -> string      -> Sha1.t                         Deferred.Or_error.t
-
-  val evalsha     : t -> Sha1.t -> Key.t list -> Value.t list -> Resp3.t Deferred.Or_error.t
+  val psubscribe : t -> string list -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
+  val script_load : t -> string -> Sha1.t Deferred.Or_error.t
+  val evalsha : t -> Sha1.t -> Key.t list -> Value.t list -> Resp3.t Deferred.Or_error.t
   val raw_command : t -> string list -> Resp3.t Deferred.Or_error.t
-  val version     : t -> string Deferred.Or_error.t
-  val role        : t -> Role.t Deferred.Or_error.t
-
+  val version : t -> string Deferred.Or_error.t
+  val role : t -> Role.t Deferred.Or_error.t
 
   (** ACL and authentication commands.
 
@@ -209,11 +207,11 @@ module type S = sig
   *)
   val acl_setuser : t -> username:string -> rules:string list -> unit Deferred.Or_error.t
 
-  val acl_deluser : t -> string list -> int                           Deferred.Or_error.t
-  val acl_users   : t -> string list                                  Deferred.Or_error.t
-  val acl_list    : t -> string list                                  Deferred.Or_error.t
-  val acl_getuser : t -> username:string -> Resp3.t                   Deferred.Or_error.t
-  val auth        : t -> auth:Auth.t -> unit -> unit                  Deferred.Or_error.t
+  val acl_deluser : t -> string list -> int Deferred.Or_error.t
+  val acl_users : t -> string list Deferred.Or_error.t
+  val acl_list : t -> string list Deferred.Or_error.t
+  val acl_getuser : t -> username:string -> Resp3.t Deferred.Or_error.t
+  val auth : t -> auth:Auth.t -> unit -> unit Deferred.Or_error.t
 
   (** Sentinel specific commands. These will fail if not directly connected to a sentinel.
 
@@ -286,9 +284,9 @@ module type S = sig
     -> ?count:int
     -> unit
     -> ([ `Next_stream_id of Stream_id.t ]
-        * (Stream_id.t * (Field.t * Value.t) list) list
-        * [ `No_longer_exist of Stream_id.t list ])
-         Deferred.Or_error.t
+       * (Stream_id.t * (Field.t * Value.t) list) list
+       * [ `No_longer_exist of Stream_id.t list ])
+       Deferred.Or_error.t
 
   val xack : t -> Key.t -> Group.t -> Stream_id.t list -> int Deferred.Or_error.t
 end
