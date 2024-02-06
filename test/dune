@@ -1,4 +1,6 @@
-(library (name redis_test)
+(library
+ (name redis_test)
  (libraries async expect_test_helpers_core redis redis_helpers
-  available_ephemeral_port core_kernel.weak_pointer)
- (preprocess (pps ppx_jane)))
+   available_ephemeral_port core_kernel.weak_pointer)
+ (preprocess
+  (pps ppx_jane)))
