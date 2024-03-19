@@ -22,11 +22,11 @@ type subscriber =
 *)
 type subscription_table = subscriber list String.Table.t
 
-type 'a t =
+type ('a, 'key, 'field, 'value) t =
   { pending_response : (module Response_intf.S) Queue.t
   ; reader : Reader.t
   ; writer : Writer.t
-  ; mutable invalidations : [ `All | `Key of 'a ] Pipe.Writer.t list
+  ; mutable invalidations : [ `All | `Key of 'key ] Pipe.Writer.t list
   ; subscriptions : subscription_table
   ; pattern_subscriptions : subscription_table
   }
@@ -37,6 +37,8 @@ struct
   module Field_parser = Parse_bulk.Make (Field)
   module Value_parser = Parse_bulk.Make (Value)
   module Field_value_map_parser = Parse_bulk.Make_map (Field_parser) (Value_parser)
+
+  type nonrec 'a t = ('a, Key.t, Field.t, Value.t) t
 
   let write_array_header writer len =
     Writer.write_char writer '*';
@@ -483,7 +485,7 @@ struct
 
   let has_close_started t = Writer.is_closed t.writer || Reader.is_closed t.reader
 
-  let create ?on_disconnect ?auth ~where_to_connect () =
+  let create ?on_disconnect ?auth ~where_to_connect (_ : 'a) =
     let%bind.Deferred.Or_error _socket, reader, writer =
       (* Tcp.connect will raise if the connection attempt times out, but we'd prefer to
          return an Error. *)

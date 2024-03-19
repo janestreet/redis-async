@@ -10,6 +10,8 @@ module Consumer = Consumer
 module Group = Group
 module Sha1 = Sha1
 
+type ('a, 'key, 'field, 'value) t = ('a, 'key, 'field, 'value) Client.t
+
 module type S = Redis_intf.S
 
 module Make (Key : Bulk_io.S) (Value : Bulk_io.S) :

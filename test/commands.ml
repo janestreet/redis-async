@@ -24,18 +24,19 @@ let%expect_test "Roles" =
   [%expect
     {|
     (Replica
-     ((leader (127.0.0.1 0)) (connection_state Connected) (replication_offset 0))) |}];
+     ((leader (127.0.0.1 0)) (connection_state Connected) (replication_offset 0)))
+    |}];
   let%bind () = Sandbox.run (module R) print_role in
   [%expect
     {|
     (Leader
      ((replication_offset 41)
-      (replicas (((where_to_connect (127.0.0.1 0)) (replication_offset 0)))))) |}];
+      (replicas (((where_to_connect (127.0.0.1 0)) (replication_offset 0))))))
+    |}];
   let%bind _, where_to_connect = Sandbox.where_to_connect_sentinel () in
   let%bind r = R.create ~where_to_connect () in
   let%bind () = print_role r in
-  [%expect {|
-    (Sentinel (test)) |}];
+  [%expect {| (Sentinel (test)) |}];
   let%bind.Deferred () = R.close r in
   Deferred.Or_error.ok_unit
 ;;
@@ -59,8 +60,7 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
     let%bind () = R.mset r [ "a", "b"; "c", "d"; "e", "f" ] in
     let%bind response = R.del r [ "c"; "g" ] in
     print_s ([%sexp_of: int] response);
-    [%expect {|
-       1 |}];
+    [%expect {| 1 |}];
     let%bind response = R.mget r [ "hello"; "a"; "c"; "e" ] in
     print_s ([%sexp_of: string option list] response);
     [%expect {| (() (b) () (f)) |}];
@@ -269,7 +269,8 @@ let%expect_test "sorted set commands" =
     [%expect
       {|
       ((a (Score 1)) (b (Score 2)) (c (Score 3)) (d (Score 4)) (e (Score 5))
-       (f (Score 6))) |}];
+       (f (Score 6)))
+      |}];
     (* [rem] *)
     let%bind response = R.zrem r key_1 [ "a"; "b"; "d"; "g" ] in
     [%test_eq: int] response 3;
@@ -523,8 +524,9 @@ let%expect_test "pub/sub" =
     p ();
     [%expect
       {|
-       ((subscribe (Ok ((bar "different channel, same pipe"))))
-        (psubscribe Nothing_available)) |}];
+      ((subscribe (Ok ((bar "different channel, same pipe"))))
+       (psubscribe Nothing_available))
+      |}];
     return ())
 ;;
 
@@ -740,8 +742,7 @@ let%expect_test "authentication" =
     let%bind () = R.set r "foo" "bar" in
     let%bind.Deferred error = R.get r "bar" in
     print_error error;
-    [%expect
-      {| "NOPERM this user has no permissions to access one of the keys used as arguments" |}];
+    [%expect {| "NOPERM No permissions to access a key" |}];
     (* check no error when accessing a field that's encoded differently in reps2 and resp3 *)
     let%bind response = R.sadd r "foo-set" [ "bar" ] in
     print_s ([%sexp_of: int] response);
@@ -752,13 +753,11 @@ let%expect_test "authentication" =
     (* check error when no permission to subscribe *)
     let%bind.Deferred error = R.subscribe r [ "foo"; "bar" ] in
     print_error error;
-    [%expect
-      {| "NOPERM this user has no permissions to access one of the channels used as arguments" |}];
+    [%expect {| "NOPERM No permissions to access a channel" |}];
     (* check error when no permission to subscribe ii *)
     let%bind.Deferred error = R.subscribe r [ "bar"; "foo" ] in
     print_error error;
-    [%expect
-      {| "NOPERM this user has no permissions to access one of the channels used as arguments" |}];
+    [%expect {| "NOPERM No permissions to access a channel" |}];
     (* check no error when permission to subscribe **THIS TEST MUST BE LAST** *)
     let%bind (_ : _ Pipe.Reader.t) = R.subscribe r [ "foo" ] in
     return ())
@@ -789,7 +788,8 @@ let%expect_test "Streams" =
     [%expect
       {|
       (Error
-       "ERR The ID specified in XADD is equal or smaller than the target stream top item") |}];
+       "ERR The ID specified in XADD is equal or smaller than the target stream top item")
+      |}];
     let%bind response =
       R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-*") [ "baz", "qux" ]
     in
@@ -840,7 +840,8 @@ let%expect_test "Streams" =
     [%expect
       {|
       ((stream
-        (("<stream id>" ((message orange))) ("<stream id>" ((message strawberry)))))) |}];
+        (("<stream id>" ((message orange))) ("<stream id>" ((message strawberry))))))
+      |}];
     return ())
 ;;
 
@@ -856,6 +857,7 @@ let%expect_test "Disconnect **THIS TEST MUST BE LAST**" =
     (Error
      ("Disconnected from Redis: see server logs for detail"
       "Disconnected from Redis: see server logs for detail"
-      "Disconnected from Redis: see server logs for detail")) |}];
+      "Disconnected from Redis: see server logs for detail"))
+    |}];
   return ()
 ;;

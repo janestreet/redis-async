@@ -15,6 +15,8 @@ module Sha1 = Sha1
 
 module type S = Redis_intf.S
 
+type ('a, 'key, 'field, 'value) t = ('a, 'key, 'field, 'value) Client.t
+
 module Make_field (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_intf.S) =
 struct
   module Key = Key
@@ -22,7 +24,13 @@ struct
   module Value = Value
   include Client.Make (Key) (Field) (Value)
 
-  type t = Key.t Client.t
+  let create' ?on_disconnect ?auth ~where_to_connect type_ =
+    create ?on_disconnect ?auth ~where_to_connect type_
+  ;;
+
+  let create ?on_disconnect ?auth ~where_to_connect () =
+    create' ?on_disconnect ?auth ~where_to_connect `Primary
+  ;;
 
   let select t index = command_string t [ "SELECT"; itoa index ] (Response.create_ok ())
   let flushall t = command_string t [ "FLUSHALL" ] (Response.create_ok ())
@@ -630,8 +638,17 @@ struct
       response
   ;;
 
-  let xclaim =
-    xclaim_command ~trailing:[] ~response:(Response.create parse_stream_response)
+  let xclaim t ?idle key group consumer ~min_idle_time streams =
+    xclaim_command
+      t
+      ?idle
+      key
+      group
+      consumer
+      ~min_idle_time
+      ~trailing:[]
+      ~response:(Response.create parse_stream_response)
+      streams
   ;;
 
   let xclaim_justid t ?idle key group consumer ~min_idle_time streams =

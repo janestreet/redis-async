@@ -23,14 +23,20 @@ val where_to_connect_sentinel
 
 (** Runs a command on a leader node *)
 val run
-  :  (module Redis.S with type t = 'a)
-  -> ('a -> unit Deferred.Or_error.t)
+  :  (module Redis.S
+        with type Key.t = 'key
+         and type Field.t = 'field
+         and type Value.t = 'value)
+  -> (([ `Primary ], 'key, 'field, 'value) Redis.t -> unit Deferred.Or_error.t)
   -> unit Deferred.Or_error.t
 
 (** Runs a command on a read-only replica *)
 val run_replica
-  :  (module Redis.S with type t = 'a)
-  -> ('a -> unit Deferred.Or_error.t)
+  :  (module Redis.S
+        with type Key.t = 'key
+         and type Field.t = 'field
+         and type Value.t = 'value)
+  -> (([ `Replica ], 'key, 'field, 'value) Redis.t -> unit Deferred.Or_error.t)
   -> unit Deferred.Or_error.t
 
 (** Runs on a cluster of three Redis nodes:
@@ -38,8 +44,11 @@ val run_replica
     2. A leader Replica
     3. A follower Replica *)
 val run_sentinel
-  :  (module Redis.S with type t = 'a)
-  -> ('a -> unit Deferred.Or_error.t)
+  :  (module Redis.S
+        with type Key.t = 'key
+         and type Field.t = 'field
+         and type Value.t = 'value)
+  -> (([ `Primary ], 'key, 'field, 'value) Redis.t -> unit Deferred.Or_error.t)
   -> unit Deferred.Or_error.t
 
 (** Teardown the sandbox *)

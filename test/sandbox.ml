@@ -4,7 +4,7 @@ open Async_unix
 open Deferred.Or_error.Let_syntax
 
 let path () = "/usr/bin/"
-let version = "7.0.11"
+let version = "7.2.4"
 let redis_server_binary () = path () ^/ "redis-server"
 
 module Redis_string = Redis.Make (Redis.Bulk_io.String) (Redis.Bulk_io.String)
@@ -56,7 +56,7 @@ let create ~args ~connected directory =
   where_to_connect
 ;;
 
-let create_with_sock ?(args = []) ?connected () =
+let create_with_sock ?(args = []) ?connected type_ =
   let%bind.Deferred directory = mkdtmp () in
   let unixsocket = directory ^ "/redis.sock" in
   let where_to_connect = Tcp.Where_to_connect.of_file unixsocket in
@@ -65,7 +65,7 @@ let create_with_sock ?(args = []) ?connected () =
     let%bind.Deferred () = Sys.when_file_exists unixsocket in
     match connected with
     | Some connected ->
-      let%bind r = Redis_string.create ~where_to_connect () in
+      let%bind r = Redis_string.create' ~where_to_connect type_ in
       let%bind.Deferred resp = connected r in
       let%bind.Deferred () = Redis_string.close r in
       Deferred.return resp
@@ -110,7 +110,7 @@ let where_to_connect_leader () =
     let open Set_once.Optional_syntax in
     match%optional l with
     | None ->
-      let where_to_connect = create_with_sock () in
+      let where_to_connect = create_with_sock `Primary in
       Set_once.set_exn l [%here] where_to_connect;
       where_to_connect
     | Some where_to_connect -> where_to_connect
@@ -151,7 +151,7 @@ let where_to_connect_replica () =
         ; Host_and_port.port leader |> Int.to_string
         ]
       in
-      let where_to_connect = create_with_sock ~args ~connected () in
+      let where_to_connect = create_with_sock ~args ~connected `Replica in
       Set_once.set_exn r [%here] where_to_connect;
       where_to_connect
     | Some where_to_connect -> where_to_connect
@@ -201,7 +201,11 @@ let where_to_connect_sentinel () =
   | Some where_to_connect -> return where_to_connect
 ;;
 
-let run (type r) (module R : Redis.S with type t = r) f =
+let run
+  (type k f v)
+  (module R : Redis.S with type Key.t = k and type Field.t = f and type Value.t = v)
+  f
+  =
   let%bind where_to_connect, _ = where_to_connect () in
   let%bind r = R.create ~where_to_connect () in
   let%bind () = f r in
@@ -209,15 +213,23 @@ let run (type r) (module R : Redis.S with type t = r) f =
   Ok ()
 ;;
 
-let run_replica (type r) (module R : Redis.S with type t = r) f =
+let run_replica
+  (type k f v)
+  (module R : Redis.S with type Key.t = k and type Field.t = f and type Value.t = v)
+  f
+  =
   let%bind where_to_connect, _ = where_to_connect_replica () in
-  let%bind r = R.create ~where_to_connect () in
+  let%bind r = R.create' ~where_to_connect `Replica in
   let%bind () = f r in
   let%map.Deferred () = R.close r in
   Ok ()
 ;;
 
-let run_sentinel (type r) (module R : Redis.S with type t = r) f =
+let run_sentinel
+  (type k f v)
+  (module R : Redis.S with type Key.t = k and type Field.t = f and type Value.t = v)
+  f
+  =
   let%bind where_to_connect = where_to_connect_sentinel () in
   let leader_name, where_to_connect = where_to_connect in
   let%bind r =
@@ -231,8 +243,8 @@ let run_sentinel (type r) (module R : Redis.S with type t = r) f =
 module R = Redis.Make (Redis.Bulk_io.String) (Redis.Bulk_io.String)
 
 let teardown ?on_disconnect () =
-  let disconnect where_to_connect =
-    let%bind r = R.create ?on_disconnect ~where_to_connect () in
+  let disconnect (where_to_connect, type_) =
+    let%bind r = R.create' ?on_disconnect ~where_to_connect type_ in
     R.shutdown r
   in
   let%bind _, sentinel = where_to_connect_sentinel () in
@@ -240,5 +252,5 @@ let teardown ?on_disconnect () =
   let%bind _, leader = where_to_connect () in
   (* The order we shutdown matters due to inter-dependencies. *)
   Deferred.Or_error.combine_errors_unit
-    (List.map [ sentinel; replica; leader ] ~f:disconnect)
+    (List.map [ sentinel, `Sentinel; replica, `Replica; leader, `Primary ] ~f:disconnect)
 ;;

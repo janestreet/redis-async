@@ -3,7 +3,7 @@
 open Core
 open Async
 
-type 'a t
+type ('a, 'key, 'field, 'value) t
 
 module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_intf.S) : sig
   module Key_parser : Parse_bulk_intf.S with type t := Key.t
@@ -13,16 +13,18 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
   module Field_value_map_parser :
     Parse_bulk_intf.S_map with type key := Field.t and type value := Value.t
 
+  type nonrec 'a t = ('a, Key.t, Field.t, Value.t) t
+
   (** Create a client that connects directly to a Redis node. [on_disconnect] will be
       called after disconnecting from the Redis node. *)
   val create
     :  ?on_disconnect:(unit -> unit)
     -> ?auth:Auth.t
     -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t
-    -> unit
-    -> Key.t t Deferred.Or_error.t
+    -> 'a
+    -> 'a t Deferred.Or_error.t
 
-  (** Create a client that connects to a Redis node via Redis Sentinel. [on_disconnect]
+  (** Create a client that connects to a Redis primary via Redis Sentinel. [on_disconnect]
       will not be called after failing to find and connect to a leader node. Instead, this
       will return an error.
 
@@ -34,11 +36,11 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> leader_name:string
     -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t list
     -> unit
-    -> Key.t t Deferred.Or_error.t
+    -> [< `Primary ] t Deferred.Or_error.t
 
-  val close : Key.t t -> unit Deferred.t
-  val close_finished : Key.t t -> unit Deferred.t
-  val has_close_started : Key.t t -> bool
+  val close : _ t -> unit Deferred.t
+  val close_finished : _ t -> unit Deferred.t
+  val has_close_started : _ t -> bool
 
   (** Send a command built from strings to Redis and expect a Response of the specified
       kind.
@@ -46,7 +48,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
       All Redis commands are arrays of strings (keeping in mind that strings are the same
       as byte arrays) so this is the most general form. *)
   val command_string
-    :  Key.t t
+    :  _ t
     -> string list
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
@@ -54,7 +56,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
   (** Send a command built from strings followed by serialized [Key.t]s to Redis and
       expect a Response of the specified kind. *)
   val command_key
-    :  Key.t t
+    :  _ t
     -> ?result_of_empty_input:'r Or_error.t
     -> string list
     -> Key.t list
@@ -63,8 +65,8 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
 
   (** Send a command built from strings followed by serialized [Key.t]s, followed by
       serialized command arguments to Redis and expect a Response of the specified kind. *)
-  type ('arg, 'r) command_key_args :=
-    Key.t t
+  type ('arg, 'r, 'a) command_key_args :=
+    'a t
     -> ?result_of_empty_input:'r Or_error.t
     -> string list
     -> Key.t list
@@ -74,21 +76,21 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
 
   (** Send a command built from strings followed by serialized [Key.t]s, followed by
       Value.t arguments to Redis and expect a Response of the specified kind. *)
-  val command_keys_values : (Value.t, 'r) command_key_args
+  val command_keys_values : (Value.t, 'r, _) command_key_args
 
   (** Send a command built from strings followed by serialized [Key.t]s, followed by
       Field.t arguments to Redis and expect a Response of the specified kind. *)
-  val command_keys_fields : (Field.t, 'r) command_key_args
+  val command_keys_fields : (Field.t, 'r, _) command_key_args
 
   (** Send a command built from strings followed by serialized [Key.t]s, followed by
       string arguments to Redis and expect a Response of the specified kind. *)
-  val command_keys_string_args : (string, 'r) command_key_args
+  val command_keys_string_args : (string, 'r, _) command_key_args
 
   (** Send a command built from strings followed by serialized [Key.t]s, followed by
       serialized [Field.t], [Value.t] pairs to Redis and expect a Response of the
       specified kind. *)
   val command_keys_fields_and_values
-    :  Key.t t
+    :  _ t
     -> ?result_of_empty_input:'r Or_error.t
     -> string list
     -> Key.t list
@@ -100,7 +102,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
   (** Send a command built from strings followed by an associative list of interleaved
       [Key.t]s and [Value.t]s to Redis and expect a Response of the specified kind. *)
   val command_kv
-    :  Key.t t
+    :  _ t
     -> ?result_of_empty_input:'r Or_error.t
     -> string list
     -> (Key.t, Value.t) List.Assoc.t
@@ -112,7 +114,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
       list of interleaved [int]s and [Value.t]s to Redis and expect a Response of the
       specified kind.*)
   val command_key_scores_values
-    :  Key.t t
+    :  _ t
     -> ?result_of_empty_input:'r Or_error.t
     -> string list
     -> Key.t
@@ -123,7 +125,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
   (** Send a command built from strings followed by [Key.t], followed by [int]s range
       items to Redis and expect a Response of the specified kind. *)
   val command_key_range
-    :  Key.t t
+    :  _ t
     -> string list
     -> Key.t
     -> min_index:int
@@ -135,7 +137,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
       [float Maybe_bound.t]s range items to Redis and expect a Response
       of the specified kind. *)
   val command_key_score_range
-    :  Key.t t
+    :  _ t
     -> string list
     -> Key.t
     -> min_score:float Maybe_bound.t
@@ -149,7 +151,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
       [Value.t Maybe_bound.t]s range items to Redis and expect a Response
       of the specified kind. *)
   val command_key_lex_range
-    :  Key.t t
+    :  _ t
     -> string list
     -> Key.t
     -> min:Value.t Maybe_bound.t
@@ -167,7 +169,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
       @param bcast Whether to use broadcast mode. Off by default.
   *)
   val client_tracking
-    :  Key.t t
+    :  [< `Primary | `Replica ] t
     -> ?bcast:bool
     -> unit
     -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
@@ -176,7 +178,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
       channel share the same redis subscription. If all readers subscribed to a channel
       close their pipe, an unsubscribe would eventually be issued. *)
   val subscribe_raw
-    :  _ t
+    :  [< `Primary | `Replica ] t
     -> [ `Literal of string list | `Pattern of string list ]
     -> consume:((read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a)
     -> 'a Pipe.Reader.t Deferred.Or_error.t
