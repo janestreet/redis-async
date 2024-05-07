@@ -1,3 +1,9 @@
+## Release v0.17.0
+
+- Implement Redis Streams commands
+- Implement sorted set commands
+- Many additional minor command additions
+
 ## Release v0.16.0
 
 - Implement Sentinel (high availability)
