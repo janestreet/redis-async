@@ -11,10 +11,14 @@ let create (type a) (parse : (read, Iobuf.seek) Iobuf.t -> a Or_error.t) =
     with type t = a)
 ;;
 
-let handle_unexpected_response ~expected : Resp3.t -> 'a Or_error.t = function
-  | Resp3.Error err -> Or_error.error_string err
+let handle_unexpected_response' ~expected : Resp3.t -> Error.t = function
+  | Resp3.Error err -> Error.of_string err
   | got ->
-    Or_error.error_s [%message "Unexpected response" (expected : string) (got : Resp3.t)]
+    Error.create_s [%message "Unexpected response" (expected : string) (got : Resp3.t)]
+;;
+
+let handle_unexpected_response ~expected r =
+  Error (handle_unexpected_response' ~expected r)
 ;;
 
 let create_ok () =
@@ -31,12 +35,20 @@ let create_int () =
     | other -> handle_unexpected_response ~expected:"int" other)
 ;;
 
+let create_int_option () =
+  create (fun buf ->
+    match Resp3.parse_exn buf with
+    | Int i -> Ok (Some i)
+    | Null -> Ok None
+    | other -> handle_unexpected_response ~expected:"int or null" other)
+;;
+
 let create_float_option () =
   create (fun buf ->
     match Resp3.parse_exn buf with
     | Null -> Ok None
     | Double d -> Ok (Some d)
-    | other -> handle_unexpected_response ~expected:"double" other)
+    | other -> handle_unexpected_response ~expected:"double or null" other)
 ;;
 
 let create_resp3 () = create (fun buf -> Ok (Resp3.parse_exn buf))
@@ -113,13 +125,21 @@ let create_host_and_port () =
 
 let create_role () = create (fun buf -> Role.of_resp3 (Resp3.parse_exn buf))
 
-let create_string_map () =
+let parse_string_map = function
+  | Resp3.Map pairs ->
+    Array.fold_result pairs ~init:String.Map.empty ~f:(fun acc pair ->
+      match pair with
+      | Resp3.String key, data -> Map.set acc ~key ~data |> Or_error.return
+      | other, _ -> handle_unexpected_response ~expected:"string key" other)
+  | other -> handle_unexpected_response ~expected:"string map" other
+;;
+
+let create_string_map () = create (fun buf -> parse_string_map (Resp3.parse_exn buf))
+
+let create_string_map_list () =
   create (fun buf ->
     match Resp3.parse_exn buf with
-    | Map pairs ->
-      Array.fold_result pairs ~init:String.Map.empty ~f:(fun acc pair ->
-        match pair with
-        | String key, data -> Map.set acc ~key ~data |> Or_error.return
-        | other, _ -> handle_unexpected_response ~expected:"string key" other)
-    | other -> handle_unexpected_response ~expected:"string map" other)
+    | Array maps ->
+      Array.to_list maps |> List.map ~f:parse_string_map |> Or_error.combine_errors
+    | other -> handle_unexpected_response ~expected:"array" other)
 ;;

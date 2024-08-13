@@ -3,16 +3,22 @@ open Core
 open Async_unix
 open Deferred.Or_error.Let_syntax
 
-let path () = "/usr/bin/"
-let version = "7.2.4"
-let redis_server_binary () = path () ^/ "redis-server"
+let redis_server_binary () = Deferred.return "/usr/bin/redis-server"
 
 module Redis_string = Redis.Make (Redis.Bulk_io.String) (Redis.Bulk_io.String)
 
 let mkdtmp () = Unix.mkdtemp "/dev/shm/redis"
 
+(* Wait for replicas to replicate, and ensure that [num_replicas] matches the returned
+   number of acknolwedged replicas. *)
+let wait_exn ?(num_replicas = 1) r =
+  let%bind num_replicas' = Redis_string.wait ~num_replicas ~timeout:`Never r in
+  assert (Int.equal num_replicas num_replicas');
+  return ()
+;;
+
 let create ~args ~connected directory =
-  let redis_server = redis_server_binary () in
+  let%bind.Deferred redis_server = redis_server_binary () in
   let%bind () =
     match%map.Deferred Sys.file_exists redis_server with
     | `Yes -> Or_error.return ()
@@ -122,6 +128,18 @@ let where_to_connect_leader () =
 let where_to_connect = where_to_connect_leader
 let r = Set_once.create ()
 
+let run
+  (type k f v)
+  (module R : Redis.S with type Key.t = k and type Field.t = f and type Value.t = v)
+  f
+  =
+  let%bind where_to_connect, _ = where_to_connect () in
+  let%bind r = R.create ~where_to_connect () in
+  let%bind result = f r in
+  let%map.Deferred () = R.close r in
+  Ok result
+;;
+
 let where_to_connect_replica () =
   let%bind _, leader = where_to_connect_leader () in
   let open Set_once.Optional_syntax in
@@ -137,6 +155,7 @@ let where_to_connect_replica () =
           let%bind.Deferred () = Clock_ns.after (Time_ns.Span.of_int_sec 1) in
           connected redis
         | Ok (Replica r) ->
+          (* Wait for the replica to state it is done connecting and replicating. *)
           (match r.connection_state with
            | Connected -> return ()
            | Connecting | Connect | Sync | Handshake ->
@@ -156,6 +175,8 @@ let where_to_connect_replica () =
       where_to_connect
     | Some where_to_connect -> where_to_connect
   in
+  (* Ensure that the replica is up-to-date with the leader before calling [f]. *)
+  let%bind () = run (module Redis_string) wait_exn in
   let%map () = flush where_to_connect_unix in
   where_to_connect_unix, where_to_connect_inet
 ;;
@@ -201,28 +222,17 @@ let where_to_connect_sentinel () =
   | Some where_to_connect -> return where_to_connect
 ;;
 
-let run
-  (type k f v)
-  (module R : Redis.S with type Key.t = k and type Field.t = f and type Value.t = v)
-  f
-  =
-  let%bind where_to_connect, _ = where_to_connect () in
-  let%bind r = R.create ~where_to_connect () in
-  let%bind () = f r in
-  let%map.Deferred () = R.close r in
-  Ok ()
-;;
-
 let run_replica
   (type k f v)
   (module R : Redis.S with type Key.t = k and type Field.t = f and type Value.t = v)
   f
   =
   let%bind where_to_connect, _ = where_to_connect_replica () in
+  let%bind () = run (module Redis_string) wait_exn in
   let%bind r = R.create' ~where_to_connect `Replica in
-  let%bind () = f r in
+  let%bind result = f r in
   let%map.Deferred () = R.close r in
-  Ok ()
+  Ok result
 ;;
 
 let run_sentinel
@@ -232,12 +242,8 @@ let run_sentinel
   =
   let%bind where_to_connect = where_to_connect_sentinel () in
   let leader_name, where_to_connect = where_to_connect in
-  let%bind r =
-    R.create_using_sentinel ~leader_name ~where_to_connect:[ where_to_connect ] ()
-  in
-  let%bind () = f r in
-  let%map.Deferred () = R.close r in
-  Ok ()
+  let%bind s = R.create' ~where_to_connect `Sentinel in
+  Monitor.protect ~finally:(fun () -> R.close s) (fun () -> f s ~leader_name)
 ;;
 
 module R = Redis.Make (Redis.Bulk_io.String) (Redis.Bulk_io.String)

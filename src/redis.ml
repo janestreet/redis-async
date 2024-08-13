@@ -2,16 +2,19 @@ open Core
 open Async
 open Common
 open Deferred.Or_error.Let_syntax
-module Bulk_io = Bulk_io
-module Resp3 = Resp3
-module Key_event = Key_event
-module Cursor = Cursor
-module Role = Role
 module Auth = Auth
-module Stream_id = Stream_id
+module Bulk_io = Bulk_io
 module Consumer = Consumer
+module Consumer_info = Consumer_info
+module Cursor = Cursor
 module Group = Group
+module Key_event = Key_event
+module Pending_info = Pending_info
+module Resp3 = Resp3
+module Role = Role
+module Sentinel = Sentinel
 module Sha1 = Sha1
+module Stream_id = Stream_id
 
 module type S = Redis_intf.S
 
@@ -45,6 +48,19 @@ struct
   let exists t keys = command_key t [ "EXISTS" ] keys (Response.create_int ())
   let echo t k = command_key t [ "ECHO" ] [ k ] (Response.create Key_parser.single)
   let ping t arg = command_string t [ "PING"; arg ] (Response.create_string ())
+
+  let wait t ~num_replicas ~timeout =
+    let timeout =
+      match timeout with
+      | `Never -> "0"
+      | `After span -> Time_ns.Span.to_int_ms span |> Int.to_string
+    in
+    command_string
+      t
+      [ "WAIT"; Int.to_string num_replicas; timeout ]
+      (Response.create_int ())
+  ;;
+
   let incr t k = command_key t [ "INCR" ] [ k ] (Response.create_int ())
 
   let del t keys =
@@ -189,6 +205,27 @@ struct
     command_keys_values t [ "SREM" ] [ key ] values (Response.create_int ())
   ;;
 
+  let sscan t ~cursor ?count ?pattern k =
+    let count =
+      match count with
+      | None -> []
+      | Some count -> [ "COUNT"; itoa count ]
+    in
+    let pattern =
+      match pattern with
+      | None -> []
+      | Some pattern -> [ "MATCH"; pattern ]
+    in
+    command_keys_string_args
+      t
+      [ "SSCAN" ]
+      [ k ]
+      ((Cursor.to_string cursor :: pattern) @ count)
+      (Response.create Value_parser.cursor_and_list)
+  ;;
+
+  let zcard t key = command_key t [ "ZCARD" ] [ key ] (Response.create_int ())
+
   let zadd t key values =
     command_key_scores_values
       t
@@ -214,6 +251,13 @@ struct
       command_keys_values t [ "ZSCORE" ] [ k ] [ v ] (Response.create_float_option ())
     in
     Option.map score ~f:(fun score -> `Score score)
+  ;;
+
+  let zrank t k v =
+    let%map rank =
+      command_keys_values t [ "ZRANK" ] [ k ] [ v ] (Response.create_int_option ())
+    in
+    Option.map rank ~f:(fun rank -> `Rank rank)
   ;;
 
   let zrem t key values =
@@ -274,6 +318,17 @@ struct
       (Response.create_int ())
   ;;
 
+  let hsetnx t k fvs =
+    command_keys_fields_and_values
+      t
+      ~result_of_empty_input:(Ok 0)
+      [ "HSETNX" ]
+      [ k ]
+      []
+      fvs
+      (Response.create_int ())
+  ;;
+
   let hget t k f =
     command_keys_fields t [ "HGET" ] [ k ] [ f ] (Response.create Value_parser.single_opt)
   ;;
@@ -310,17 +365,22 @@ struct
       (Response.create_int ())
   ;;
 
-  let hscan t ~cursor ?count k =
+  let hscan t ~cursor ?count ?pattern k =
     let count =
       match count with
       | None -> []
       | Some count -> [ "COUNT"; itoa count ]
     in
+    let pattern =
+      match pattern with
+      | None -> []
+      | Some pattern -> [ "MATCH"; pattern ]
+    in
     command_keys_string_args
       t
       [ "HSCAN" ]
       [ k ]
-      (Cursor.to_string cursor :: count)
+      ((Cursor.to_string cursor :: pattern) @ count)
       (Response.create Field_value_map_parser.cursor_and_alternating_key_value)
   ;;
 
@@ -455,13 +515,6 @@ struct
 
   let role t = command_string t [ "ROLE" ] (Response.create_role ())
 
-  let sentinel_leader t name =
-    command_string
-      t
-      [ "SENTINEL"; "GET-MASTER-ADDR-BY-NAME"; name ]
-      (Response.create_host_and_port ())
-  ;;
-
   let auth t ~auth:{ Auth.username; password } () =
     let cmds = [ "AUTH"; username; password ] in
     command_string t cmds (Response.create_ok ())
@@ -507,6 +560,24 @@ struct
             (unexpected : Resp3.t)]
   ;;
 
+  module Stream_range = struct
+    type t =
+      | Inclusive of Stream_id.t
+      | Exclusive of Stream_id.t
+
+    let start = function
+      | None -> "-"
+      | Some (Inclusive id) -> Stream_id.to_string id
+      | Some (Exclusive id) -> "(" ^ Stream_id.to_string id
+    ;;
+
+    let end_ = function
+      | None -> "+"
+      | Some (Inclusive id) -> Stream_id.to_string id
+      | Some (Exclusive id) -> "(" ^ Stream_id.to_string id
+    ;;
+  end
+
   let parse_stream_response buf =
     Resp3.expect_char buf '*';
     let len = Resp3.number buf in
@@ -542,6 +613,8 @@ struct
     | unexpected ->
       raise (Resp3.Protocol_error (sprintf "Expected %% or _ but observed %c" unexpected))
   ;;
+
+  let xlen t key = command_key t [ "XLEN" ] [ key ] (Response.create_int ())
 
   let xadd t key ?stream_id fvlist =
     let stream_id = Option.value_map stream_id ~default:"*" ~f:Stream_id.to_string in
@@ -579,8 +652,8 @@ struct
   ;;
 
   let xrange t key ?start ?end_ ?count () =
-    let start = Option.value_map start ~default:"-" ~f:Stream_id.to_string in
-    let end_ = Option.value_map end_ ~default:"+" ~f:Stream_id.to_string in
+    let start = Stream_range.start start in
+    let end_ = Stream_range.end_ end_ in
     let args =
       match count with
       | None -> [ start; end_ ]
@@ -589,6 +662,22 @@ struct
     command_keys_string_args
       t
       [ "XRANGE" ]
+      [ key ]
+      args
+      (Response.create parse_stream_response)
+  ;;
+
+  let xrevrange t key ?end_ ?start ?count () =
+    let end_ = Stream_range.end_ end_ in
+    let start = Stream_range.start start in
+    let args =
+      match count with
+      | None -> [ end_; start ]
+      | Some count -> [ end_; start; "COUNT"; Int.to_string count ]
+    in
+    command_keys_string_args
+      t
+      [ "XREVRANGE" ]
       [ key ]
       args
       (Response.create parse_stream_response)
@@ -704,6 +793,67 @@ struct
       [ key ]
       (Group.to_string group :: List.map ids ~f:Stream_id.to_string)
       (Response.create_int ())
+  ;;
+
+  let xinfo_consumers t key group =
+    match%bind
+      command_keys_string_args
+        t
+        [ "XINFO"; "CONSUMERS" ]
+        [ key ]
+        [ Group.to_string group ]
+        (Response.create_resp3 ())
+    with
+    | Resp3.(Array consumer_infos) ->
+      let%map consumer_infos =
+        Array.to_list consumer_infos
+        |> List.map ~f:Consumer_info.of_resp3
+        |> Or_error.all
+        |> Deferred.return
+      in
+      `Ok consumer_infos
+    | Error err when String.is_prefix err ~prefix:"NOGROUP" -> return `No_such_group
+    | Error "ERR no such key" -> return `No_such_key
+    | resp3 ->
+      Deferred.Or_error.error_s
+        [%message [%here] "Unexpected response to xinfo consumers" (resp3 : Resp3.t)]
+  ;;
+
+  let xgroup_delconsumer t key group consumer =
+    command_keys_string_args
+      t
+      [ "XGROUP"; "DELCONSUMER" ]
+      [ key ]
+      [ Group.to_string group; Consumer.to_string consumer ]
+      (Response.create_int ())
+  ;;
+
+  let xpending_extended t key group ?start ?end_ ~count () =
+    let start = Stream_range.start start in
+    let end_ = Stream_range.end_ end_ in
+    match%map.Deferred
+      command_keys_string_args
+        t
+        [ "XPENDING" ]
+        [ key ]
+        [ Group.to_string group; start; end_; Int.to_string count ]
+        (Response.create_resp3 ())
+    with
+    | Ok (Array arr) ->
+      (match
+         Array.partition_map arr ~f:(fun resp3 ->
+           match Pending_info.Extended.of_resp3 resp3 with
+           | Ok pi -> First pi
+           | Error err -> Second err)
+       with
+       | ok, [||] -> Ok (`Ok (Array.to_list ok))
+       | _, errs -> Error (Error.of_list (Array.to_list errs)))
+    | Ok (Error err) when String.is_prefix err ~prefix:"NOGROUP" ->
+      Ok `No_such_stream_or_group
+    | Error _ as error -> error
+    | Ok resp3 ->
+      raise_s
+        [%message [%here] "Unexpected response to xpending_extended" (resp3 : Resp3.t)]
   ;;
 end
 

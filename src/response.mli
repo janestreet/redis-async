@@ -13,6 +13,9 @@
 
 open Core
 
+val handle_unexpected_response' : expected:string -> Resp3.t -> Error.t
+val handle_unexpected_response : expected:string -> Resp3.t -> _ Or_error.t
+
 (** Create a response that runs the supplied parsing function *)
 val create
   :  ((read, Iobuf.seek) Iobuf.t -> 'a Or_error.t)
@@ -23,6 +26,9 @@ val create_ok : unit -> (module Response_intf.S with type t = unit)
 
 (** Create a response that expects an integer *)
 val create_int : unit -> (module Response_intf.S with type t = int)
+
+(** Create a response that expects an optional integer *)
+val create_int_option : unit -> (module Response_intf.S with type t = int option)
 
 (** Create a response that expects an optional float. *)
 val create_float_option : unit -> (module Response_intf.S with type t = float option)
@@ -65,3 +71,8 @@ val create_role : unit -> (module Response_intf.S with type t = Role.t)
 val create_string_map
   :  unit
   -> (module Response_intf.S with type t = Resp3.t String.Map.t)
+
+(** Create a response that expects an array of string maps *)
+val create_string_map_list
+  :  unit
+  -> (module Response_intf.S with type t = Resp3.t String.Map.t list)

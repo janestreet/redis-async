@@ -52,6 +52,6 @@ type t =
 
 val of_resp3 : Resp3.t -> t Or_error.t
 
-module For_testing : sig
-  val zero_ports : t -> t
+module For_test_with_deterministic_sexp : sig
+  type nonrec t = t [@@deriving compare, sexp_of]
 end

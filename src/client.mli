@@ -24,23 +24,38 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> 'a
     -> 'a t Deferred.Or_error.t
 
-  (** Create a client that connects to a Redis primary via Redis Sentinel. [on_disconnect]
-      will not be called after failing to find and connect to a leader node. Instead, this
-      will return an error.
+  val sentinel_get_leader_address
+    :  [< `Sentinel ] t
+    -> leader_name:string
+    -> Host_and_port.t Deferred.Or_error.t
 
-      Does not automatically reconnect in case of failure. *)
-  val create_using_sentinel
-    :  ?on_disconnect:(unit -> unit)
-    -> ?sentinel_auth:Auth.t
+  val sentinel_replicas
+    :  [< `Sentinel ] t
+    -> leader_name:string
+    -> Sentinel.Replica.t list Deferred.Or_error.t
+
+  val sentinel_connect_to_one_replica
+    :  [< `Sentinel ] t
+    -> ?on_disconnect:(unit -> unit)
+    -> ?auth:Auth.t
+    -> ?replica_priority_sorter:(Sentinel.Replica.t list -> Sentinel.Replica.t list)
+    -> leader_name:string
+    -> unit
+    -> [< `Replica ] t Deferred.Or_error.t
+
+  (** Create a leader connection given a sentinel connection. *)
+  val sentinel_connect_to_leader
+    :  [< `Sentinel ] t
+    -> ?on_disconnect:(unit -> unit)
     -> ?auth:Auth.t
     -> leader_name:string
-    -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t list
     -> unit
     -> [< `Primary ] t Deferred.Or_error.t
 
   val close : _ t -> unit Deferred.t
   val close_finished : _ t -> unit Deferred.t
   val has_close_started : _ t -> bool
+  val connection_state : _ t -> [ `Connected | `Disconnected | `Disconnecting ]
 
   (** Send a command built from strings to Redis and expect a Response of the specified
       kind.
@@ -54,20 +69,26 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> 'r Deferred.Or_error.t
 
   (** Send a command built from strings followed by serialized [Key.t]s to Redis and
-      expect a Response of the specified kind. *)
+      expect a Response of the specified kind.
+  *)
   val command_key
     :  _ t
     -> ?result_of_empty_input:'r Or_error.t
+         (** If [Key.t list] is empty, and [result_of_empty_input] is not provided, Redis
+             will return an error. *)
     -> string list
     -> Key.t list
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
 
   (** Send a command built from strings followed by serialized [Key.t]s, followed by
-      serialized command arguments to Redis and expect a Response of the specified kind. *)
+      serialized command arguments to Redis and expect a Response of the specified kind.
+  *)
   type ('arg, 'r, 'a) command_key_args :=
     'a t
     -> ?result_of_empty_input:'r Or_error.t
+         (** If [Key.t list] or ['arg list] is empty, and [result_of_empty_input] is not
+             provided, Redis will return an error. *)
     -> string list
     -> Key.t list
     -> 'arg list
@@ -88,10 +109,13 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
 
   (** Send a command built from strings followed by serialized [Key.t]s, followed by
       serialized [Field.t], [Value.t] pairs to Redis and expect a Response of the
-      specified kind. *)
+      specified kind.
+  *)
   val command_keys_fields_and_values
     :  _ t
     -> ?result_of_empty_input:'r Or_error.t
+         (** If [Key.t list] or [(Field.t * Value.t) list] is empty, and
+             [result_of_empty_input] is not provided, Redis will return an error. *)
     -> string list
     -> Key.t list
     -> string list

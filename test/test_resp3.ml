@@ -106,7 +106,7 @@ let%expect_test "Array" =
 ;;
 
 let%expect_test "Length check" =
-  Expect_test_helpers_core.require_does_raise [%here] (fun () ->
+  Expect_test_helpers_core.require_does_raise (fun () ->
     Resp3.parse_exn (Iobuf.of_string "$3\r\nfour"));
   [%expect {| (Redis__Common.Need_more_data) |}]
 ;;

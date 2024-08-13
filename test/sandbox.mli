@@ -48,10 +48,10 @@ val run_sentinel
         with type Key.t = 'key
          and type Field.t = 'field
          and type Value.t = 'value)
-  -> (([ `Primary ], 'key, 'field, 'value) Redis.t -> unit Deferred.Or_error.t)
+  -> (([ `Sentinel ], 'key, 'field, 'value) Redis.t
+      -> leader_name:string
+      -> unit Deferred.Or_error.t)
   -> unit Deferred.Or_error.t
 
 (** Teardown the sandbox *)
 val teardown : ?on_disconnect:(unit -> unit) -> unit -> unit Deferred.Or_error.t
-
-val version : string

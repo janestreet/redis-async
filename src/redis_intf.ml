@@ -38,18 +38,42 @@ module type S = sig
     -> unit
     -> [ `Primary ] t Deferred.Or_error.t
 
-  val create_using_sentinel
-    :  ?on_disconnect:(unit -> unit)
-    -> ?sentinel_auth:Auth.t
+  val sentinel_replicas
+    :  [< `Sentinel ] t
+    -> leader_name:string
+    -> Sentinel.Replica.t list Deferred.Or_error.t
+
+  val sentinel_get_leader_address
+    :  [< `Sentinel ] t
+    -> leader_name:string
+    -> Host_and_port.t Or_error.t Deferred.t
+
+  (** Create a replica connection given a sentinel connection.
+
+      @param replica_priority_sorter Provides the order in which to attempt replica
+      connections. Defaults to randomization.
+  *)
+  val sentinel_connect_to_one_replica
+    :  [< `Sentinel ] t
+    -> ?on_disconnect:(unit -> unit)
+    -> ?auth:Auth.t
+    -> ?replica_priority_sorter:(Sentinel.Replica.t list -> Sentinel.Replica.t list)
+    -> leader_name:string
+    -> unit
+    -> [< `Replica ] t Deferred.Or_error.t
+
+  val sentinel_connect_to_leader
+    :  [< `Sentinel ] t
+    -> ?on_disconnect:(unit -> unit)
     -> ?auth:Auth.t
     -> leader_name:string
-    -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t list
     -> unit
-    -> [ `Primary ] t Deferred.Or_error.t
+    -> [< `Primary ] t Deferred.Or_error.t
 
   val close : _ t -> unit Deferred.t
   val close_finished : _ t -> unit Deferred.t
   val has_close_started : _ t -> bool
+  val connection_state : _ t -> [ `Connected | `Disconnected | `Disconnecting ]
 
   (** Redis commands are documented at: https://redis.io/commands *)
 
@@ -63,6 +87,12 @@ module type S = sig
     :  [< `Primary | `Replica | `Sentinel ] t
     -> string
     -> string Deferred.Or_error.t
+
+  val wait
+    :  [< `Primary ] t
+    -> num_replicas:int
+    -> timeout:[ `Never | `After of Time_ns.Span.t ]
+    -> int Deferred.Or_error.t
 
   val incr : [< `Primary ] t -> Key.t -> int Deferred.Or_error.t
   val del : [< `Primary ] t -> Key.t list -> int Deferred.Or_error.t
@@ -114,7 +144,12 @@ module type S = sig
   val mset : [< `Primary ] t -> (Key.t * Value.t) list -> unit Deferred.Or_error.t
   val msetnx : [< `Primary ] t -> (Key.t * Value.t) list -> bool Deferred.Or_error.t
   val get : [< `Primary | `Replica ] t -> Key.t -> Value.t option Deferred.Or_error.t
-  val mget : [< `Primary ] t -> Key.t list -> Value.t option list Deferred.Or_error.t
+
+  val mget
+    :  [< `Primary | `Replica ] t
+    -> Key.t list
+    -> Value.t option list Deferred.Or_error.t
+
   val smembers : [< `Primary | `Replica ] t -> Key.t -> Value.t list Deferred.Or_error.t
 
   val sismember
@@ -131,6 +166,14 @@ module type S = sig
 
   val sadd : [< `Primary ] t -> Key.t -> Value.t list -> int Deferred.Or_error.t
   val srem : [< `Primary ] t -> Key.t -> Value.t list -> int Deferred.Or_error.t
+
+  val sscan
+    :  [< `Primary | `Replica ] t
+    -> cursor:Cursor.t
+    -> ?count:int
+    -> ?pattern:string
+    -> Key.t
+    -> (Cursor.t * Value.t list) Deferred.Or_error.t
 
   val zadd
     :  [< `Primary ] t
@@ -159,6 +202,8 @@ module type S = sig
     -> Time_ns.t
     -> [ `Set | `Not_set ] Deferred.Or_error.t
 
+  val zcard : [< `Primary | `Replica ] t -> Key.t -> int Deferred.Or_error.t
+
   val zrange
     :  [< `Primary | `Replica ] t
     -> Key.t
@@ -171,6 +216,12 @@ module type S = sig
     -> Key.t
     -> Value.t
     -> [ `Score of float ] option Deferred.Or_error.t
+
+  val zrank
+    :  [< `Primary | `Replica ] t
+    -> Key.t
+    -> Value.t
+    -> [ `Rank of int ] option Deferred.Or_error.t
 
   val zrangebylex
     :  [< `Primary | `Replica ] t
@@ -208,6 +259,12 @@ module type S = sig
     -> (Field.t * Value.t) list
     -> int Deferred.Or_error.t
 
+  val hsetnx
+    :  [< `Primary ] t
+    -> Key.t
+    -> (Field.t * Value.t) list
+    -> int Deferred.Or_error.t
+
   val hget
     :  [< `Primary | `Replica ] t
     -> Key.t
@@ -234,6 +291,7 @@ module type S = sig
     :  [< `Primary | `Replica ] t
     -> cursor:Cursor.t
     -> ?count:int
+    -> ?pattern:string
     -> Key.t
     -> (Cursor.t * (Field.t * Value.t) list) Deferred.Or_error.t
 
@@ -318,12 +376,15 @@ module type S = sig
     -> unit
     -> unit Deferred.Or_error.t
 
-  (** Sentinel specific commands.
-
-      Read here for more: https://redis.io/docs/manual/sentinel/#sentinel-api *)
-  val sentinel_leader : [< `Sentinel ] t -> string -> Host_and_port.t Deferred.Or_error.t
-
   (** Streams *)
+
+  module Stream_range : sig
+    type t =
+      | Inclusive of Stream_id.t
+      | Exclusive of Stream_id.t
+  end
+
+  val xlen : [< `Primary | `Replica ] t -> Key.t -> int Deferred.Or_error.t
 
   val xadd
     :  [< `Primary ] t
@@ -344,8 +405,17 @@ module type S = sig
   val xrange
     :  [< `Primary | `Replica ] t
     -> Key.t
-    -> ?start:Stream_id.t
-    -> ?end_:Stream_id.t
+    -> ?start:Stream_range.t
+    -> ?end_:Stream_range.t
+    -> ?count:int
+    -> unit
+    -> (Stream_id.t * (Field.t * Value.t) list) list Deferred.Or_error.t
+
+  val xrevrange
+    :  [< `Primary | `Replica ] t
+    -> Key.t
+    -> ?end_:Stream_range.t
+    -> ?start:Stream_range.t
     -> ?count:int
     -> unit
     -> (Stream_id.t * (Field.t * Value.t) list) list Deferred.Or_error.t
@@ -391,7 +461,7 @@ module type S = sig
     -> ([ `Next_stream_id of Stream_id.t ]
        * (Stream_id.t * (Field.t * Value.t) list) list
        * [ `No_longer_exist of Stream_id.t list ])
-       Deferred.Or_error.t
+         Deferred.Or_error.t
 
   val xack
     :  [< `Primary ] t
@@ -399,4 +469,28 @@ module type S = sig
     -> Group.t
     -> Stream_id.t list
     -> int Deferred.Or_error.t
+
+  val xinfo_consumers
+    :  [< `Primary ] t
+    -> Key.t
+    -> Group.t
+    -> [ `Ok of Consumer_info.t list | `No_such_key | `No_such_group ] Deferred.Or_error.t
+
+  val xgroup_delconsumer
+    :  [< `Primary ] t
+    -> Key.t
+    -> Group.t
+    -> Consumer.t
+    -> int Deferred.Or_error.t
+
+  val xpending_extended
+    :  [< `Primary ] t
+    -> Key.t
+    -> Group.t
+    -> ?start:Stream_range.t
+    -> ?end_:Stream_range.t
+    -> count:int
+    -> unit
+    -> [ `Ok of Pending_info.Extended.t list | `No_such_stream_or_group ]
+         Deferred.Or_error.t
 end

@@ -7,7 +7,11 @@ module R = Redis.Make (Bulk_io.String) (Bulk_io.String)
 
 let with_sandbox f =
   let%bind () = Sandbox.run (module R) f in
-  Sandbox.run_sentinel (module R) f
+  Sandbox.run_sentinel
+    (module R)
+    (fun s ~leader_name ->
+      let%bind r = R.sentinel_connect_to_leader s ~leader_name () in
+      Monitor.protect ~finally:(fun () -> R.close r) (fun () -> f r))
 ;;
 
 let print_error = function
@@ -15,30 +19,90 @@ let print_error = function
   | Error e -> print_s ([%sexp_of: Error.t] e)
 ;;
 
+let prints_without_spans sexp =
+  print_endline (Expect_test_helpers_core.remove_time_spans (Sexp.to_string_hum sexp))
+;;
+
+let print_role r =
+  let%map response = R.role r in
+  print_s ([%sexp_of: Role.For_test_with_deterministic_sexp.t] response)
+;;
+
 let%expect_test "Roles" =
-  let print_role r =
-    let%map response = R.role r >>| Role.For_testing.zero_ports in
-    print_s ([%sexp_of: Role.t] response)
-  in
   let%bind () = Sandbox.run_replica (module R) print_role in
   [%expect
     {|
     (Replica
-     ((leader (127.0.0.1 0)) (connection_state Connected) (replication_offset 0)))
+     ((leader (127.0.0.1 PORT)) (connection_state Connected)
+      (replication_offset <opaque>)))
     |}];
   let%bind () = Sandbox.run (module R) print_role in
   [%expect
     {|
     (Leader
-     ((replication_offset 41)
-      (replicas (((where_to_connect (127.0.0.1 0)) (replication_offset 0))))))
+     ((replication_offset <opaque>)
+      (replicas
+       (((where_to_connect (127.0.0.1 PORT)) (replication_offset <opaque>))))))
     |}];
-  let%bind _, where_to_connect = Sandbox.where_to_connect_sentinel () in
-  let%bind r = R.create ~where_to_connect () in
-  let%bind () = print_role r in
+  let%bind () = Sandbox.run_sentinel (module R) (fun r ~leader_name:_ -> print_role r) in
   [%expect {| (Sentinel (test)) |}];
-  let%bind.Deferred () = R.close r in
-  Deferred.Or_error.ok_unit
+  return ()
+;;
+
+let%expect_test "Sentinel" =
+  let%bind () =
+    Sandbox.run_sentinel
+      (module R)
+      (fun r ~leader_name ->
+        let%bind r = R.sentinel_connect_to_leader r ~leader_name () in
+        let%bind () = print_role r in
+        let%bind.Deferred () = R.close r in
+        return ())
+  in
+  [%expect
+    {|
+    (Leader
+     ((replication_offset <opaque>)
+      (replicas
+       (((where_to_connect (127.0.0.1 PORT)) (replication_offset <opaque>))))))
+    |}];
+  let%bind () =
+    Sandbox.run_sentinel
+      (module R)
+      (fun r ~leader_name ->
+        let%bind r = R.sentinel_connect_to_one_replica r ~leader_name () in
+        let%bind () = print_role r in
+        let%bind.Deferred () = R.close r in
+        return ())
+  in
+  [%expect
+    {|
+    (Replica
+     ((leader (127.0.0.1 PORT)) (connection_state Connected)
+      (replication_offset <opaque>)))
+    |}];
+  (* Show the error message in the case where we accidentally connect to a non-sentinel
+     server and try to invoke a SENTINEL command *)
+  let%bind () =
+    let%bind leader_name = Sandbox.where_to_connect_sentinel () >>| fst in
+    let%bind where_to_connect = Sandbox.where_to_connect () >>| fst in
+    let%bind r = R.create' ~where_to_connect `Sentinel in
+    Monitor.protect
+      ~finally:(fun () -> R.close r)
+      (fun () ->
+        let%bind.Deferred result =
+          R.sentinel_connect_to_one_replica r ~leader_name ()
+          |> Deferred.Or_error.ignore_m
+        in
+        print_s [%sexp (result : unit Or_error.t)];
+        return ())
+  in
+  [%expect
+    {|
+    (Error
+     "ERR unknown command 'SENTINEL', with args beginning with: 'REPLICAS' 'test' ")
+    |}];
+  return ()
 ;;
 
 let%expect_test ("Strings" [@tags "64-bits-only"]) =
@@ -214,6 +278,18 @@ let%expect_test "set commands" =
     [%test_eq: bool list] response [];
     let%bind response = R.smismember r key_1 [ "a"; "f" ] in
     [%test_eq: bool list] response [ false; true ];
+    (* SSCAN and [Redis_helpers.Scan.sfold]. *)
+    let%bind response =
+      Redis_helpers.Scan.sfold
+        ~batch_size:2
+        ~init:String.Set.empty
+        ~f:(fun acc values -> Set.union acc (String.Set.of_list values) |> return)
+        (module R)
+        r
+        key_1
+    in
+    print_s ([%sexp_of: String.Set.t] response);
+    [%expect {| (c e f) |}];
     return ())
 ;;
 
@@ -236,6 +312,16 @@ let%expect_test "sorted set commands" =
     [%test_eq: int] response 2;
     let%bind () = query_and_print_members key_1 in
     [%expect {| (a b c d e f) |}];
+    (* [zcard] *)
+    let%bind response = R.zcard r key_1 in
+    print_s ([%sexp_of: int] response);
+    [%expect {| 6 |}];
+    let%bind response = R.zcard r "doesntexist" in
+    print_s ([%sexp_of: int] response);
+    [%expect {| 0 |}];
+    let%bind response = R.zcard r "" in
+    print_s ([%sexp_of: int] response);
+    [%expect {| 0 |}];
     (* [zrangebylex] *)
     let%bind response = R.zrangebylex r key_1 ~min:(Incl "b") ~max:(Excl "e") in
     print_s ([%sexp_of: string list] response);
@@ -280,11 +366,18 @@ let%expect_test "sorted set commands" =
     [%test_eq: [ `Score of float ] option] response None;
     let%bind response = R.zscore r key_1 "c" in
     [%test_eq: [ `Score of float ] option] response (Some (`Score 3.));
+    let%bind response = R.zrank r key_1 "a" in
+    [%test_eq: [ `Rank of int ] option] response None;
+    let%bind response = R.zrank r key_1 "c" in
+    [%test_eq: [ `Rank of int ] option] response (Some (`Rank 0));
+    let%bind response = R.zrank r key_1 "e" in
+    [%test_eq: [ `Rank of int ] option] response (Some (`Rank 1));
     let%bind response = R.raw_command r [ "echo"; "hello" ] in
     print_s ([%sexp_of: Resp3.t] response);
     [%expect {| (String hello) |}];
     let%bind response = R.version r in
-    [%test_eq: string] response Sandbox.version;
+    print_endline response;
+    [%expect {| 7.2.4 |}];
     return ())
 ;;
 
@@ -324,20 +417,38 @@ let%expect_test "hash commands" =
     (* HVALS *)
     let%bind response = R.hvals r key_1 >>| List.sort ~compare:String.compare in
     [%test_eq: string list] response [ "A"; "B" ];
+    (* HSETNX *)
+    let%bind response = R.hsetnx r key_1 [ "a", "B" ] in
+    [%test_eq: int] response 0;
+    let%bind response = R.hsetnx r key_1 [ "f", "F" ] in
+    [%test_eq: int] response 1;
     (* HSCAN *)
-    let values = [ "a", "A"; "b", "B"; "c", "C"; "d", "D"; "e", "E" ] in
+    let values = [ "a", "A"; "b", "B"; "c", "C"; "d", "D"; "e", "E"; "f", "F" ] in
     let%bind (_ : int) = R.hset r key_1 values in
     let%bind response =
       Deferred.Or_error.repeat_until_finished
         (Cursor.zero (* cursor *), [] (* values *))
         (fun (cursor, values) ->
-        let%map cursor, new_values = R.hscan r ~cursor ~count:2 key_1 in
-        let values = values @ new_values in
-        if Cursor.(cursor = zero) then `Finished values else `Repeat (cursor, values))
+           let%map cursor, new_values = R.hscan r ~cursor ~count:2 key_1 in
+           let values = values @ new_values in
+           if Cursor.(cursor = zero) then `Finished values else `Repeat (cursor, values))
       >>| List.dedup_and_sort ~compare:[%compare: string * string]
     in
     [%test_eq: (string * string) list] response values;
     return ())
+;;
+
+let%expect_test "connection state" =
+  let%bind where_to_connect, _ = Sandbox.where_to_connect () in
+  let%bind r = R.create ~where_to_connect () in
+  [%test_eq: [ `Connected | `Disconnecting | `Disconnected ]]
+    (R.connection_state r)
+    `Connected;
+  let%bind.Deferred () = R.close r in
+  [%test_eq: [ `Connected | `Disconnecting | `Disconnected ]]
+    (R.connection_state r)
+    `Disconnected;
+  return ()
 ;;
 
 let%expect_test "Parallel" =
@@ -771,6 +882,7 @@ let%expect_test "Streams" =
     in
     print_s ([%sexp_of: Test_stream_id.t] response);
     [%expect {| "<stream id>" |}];
+    let%bind _ = R.xadd r "mystream" [ "sensor-id", "2345"; "temperature", "12.3" ] in
     let%bind response =
       R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-1") [ "field", "value" ]
     in
@@ -797,7 +909,21 @@ let%expect_test "Streams" =
     [%expect {| 0-3 |}];
     let%bind response = R.xrange r "mystream" () in
     print_s ([%sexp_of: (Test_stream_id.t * (string * string) list) list] response);
-    [%expect {| (("<stream id>" ((sensor-id 1234) (temperature 19.8)))) |}];
+    [%expect
+      {|
+      (("<stream id>" ((sensor-id 1234) (temperature 19.8)))
+       ("<stream id>" ((sensor-id 2345) (temperature 12.3))))
+      |}];
+    let%bind response = R.xrevrange r "mystream" () in
+    print_s ([%sexp_of: (Test_stream_id.t * (string * string) list) list] response);
+    [%expect
+      {|
+      (("<stream id>" ((sensor-id 2345) (temperature 12.3)))
+       ("<stream id>" ((sensor-id 1234) (temperature 19.8))))
+      |}];
+    let%bind response = R.xrevrange r "invalid key" () in
+    print_s ([%sexp_of: (Test_stream_id.t * (string * string) list) list] response);
+    [%expect {| () |}];
     let group = Group.of_string "mygroup" in
     let%bind response = R.xgroup_create r "stream" group ~mkstream:() () in
     print_s ([%sexp_of: [ `Ok | `Already_exists ]] response);
@@ -807,32 +933,14 @@ let%expect_test "Streams" =
     let%bind _ = R.xadd r "stream" [ "message", "strawberry" ] in
     let%bind _ = R.xadd r "stream" [ "message", "apricot" ] in
     let%bind _ = R.xadd r "stream" [ "message", "banana" ] in
+    let%bind response = R.xlen r "stream" in
+    print_s ([%sexp_of: int] response);
+    [%expect {| 5 |}];
     let%bind response = R.xgroup_create r "stream" group ~mkstream:() () in
     print_s ([%sexp_of: [ `Ok | `Already_exists ]] response);
     [%expect {| Already_exists |}];
     let%bind response =
-      R.xreadgroup r group (Consumer.of_string "Alice") ~count:1 [ "stream", None ]
-    in
-    print_s
-      ([%sexp_of: (string * (Test_stream_id.t * (string * string) list) list) list]
-         response);
-    [%expect {| ((stream (("<stream id>" ((message apple)))))) |}];
-    let stream_id = fst (List.hd_exn (snd (List.hd_exn response))) in
-    let%bind stream_ids =
-      R.xclaim_justid
-        r
-        "stream"
-        group
-        (Consumer.of_string "Alice")
-        ~min_idle_time:Time_ns.Span.zero
-        [ stream_id ]
-    in
-    [%test_eq: Stream_id.t list] stream_ids [ stream_id ];
-    let%bind response = R.xack r "stream" group [ stream_id ] in
-    print_s ([%sexp_of: int] response);
-    [%expect {| 1 |}];
-    let%bind response =
-      R.xreadgroup r group (Consumer.of_string "Bob") ~count:2 [ "stream", None ]
+      R.xreadgroup r group (Consumer.of_string "Alice") ~count:4 [ "stream", None ]
     in
     print_s
       ([%sexp_of: (string * (Test_stream_id.t * (string * string) list) list) list]
@@ -840,8 +948,78 @@ let%expect_test "Streams" =
     [%expect
       {|
       ((stream
-        (("<stream id>" ((message orange))) ("<stream id>" ((message strawberry))))))
+        (("<stream id>" ((message apple))) ("<stream id>" ((message orange)))
+         ("<stream id>" ((message strawberry)))
+         ("<stream id>" ((message apricot))))))
       |}];
+    let extract_id i = fst (List.nth_exn (snd (List.hd_exn response)) i) in
+    let stream_id_0 = extract_id 0 in
+    let stream_id_1 = extract_id 1 in
+    let alice = Consumer.of_string "Alice" in
+    let stream_id_2 = extract_id 2 in
+    let stream_id_3 = extract_id 3 in
+    let bob = Consumer.of_string "Bob" in
+    let%bind stream_ids =
+      R.xclaim_justid
+        r
+        "stream"
+        group
+        alice
+        ~min_idle_time:Time_ns.Span.zero
+        [ stream_id_0; stream_id_1; stream_id_2; stream_id_3 ]
+    in
+    [%test_eq: Stream_id.t list]
+      stream_ids
+      [ stream_id_0; stream_id_1; stream_id_2; stream_id_3 ];
+    let%bind result = R.xpending_extended r "invalid" group ~count:2 () in
+    assert (Poly.(result = `No_such_stream_or_group));
+    let pending_ids = function
+      | `Ok pending ->
+        List.map pending ~f:(fun { Redis.Pending_info.Extended.stream_id; _ } ->
+          stream_id)
+      | `No_such_stream_or_group -> failwith "unexpected"
+    in
+    let%bind result = R.xpending_extended r "stream" group ~count:2 () in
+    [%test_result: Redis.Stream_id.t list]
+      (pending_ids result)
+      ~expect:[ stream_id_0; stream_id_1 ];
+    let%bind result =
+      R.xpending_extended
+        r
+        "stream"
+        group
+        ~start:(Exclusive stream_id_0)
+        ~end_:(Inclusive stream_id_2)
+        ~count:10
+        ()
+    in
+    [%test_result: Redis.Stream_id.t list]
+      (pending_ids result)
+      ~expect:[ stream_id_1; stream_id_2 ];
+    [%expect {| |}];
+    let%bind response = R.xack r "stream" group [ stream_id_0 ] in
+    print_s ([%sexp_of: int] response);
+    [%expect {| 1 |}];
+    let%bind response = R.xreadgroup r group bob ~count:2 [ "stream", None ] in
+    print_s
+      ([%sexp_of: (string * (Test_stream_id.t * (string * string) list) list) list]
+         response);
+    [%expect {| ((stream (("<stream id>" ((message banana)))))) |}];
+    let print_consumer_info stream group =
+      let%map response = R.xinfo_consumers r stream group in
+      prints_without_spans
+        ([%sexp_of: [ `No_such_group | `No_such_key | `Ok of Consumer_info.t list ]]
+           response)
+    in
+    let%bind result = R.xgroup_delconsumer r "stream" group bob in
+    print_s ([%sexp_of: int] result);
+    [%expect {| 1 |}];
+    let%bind () = print_consumer_info "stream" group in
+    [%expect {| (Ok (((name Alice) (pending 3) (idle SPAN) (inactive (SPAN))))) |}];
+    let%bind () = print_consumer_info "invalid" group in
+    [%expect {| No_such_key |}];
+    let%bind () = print_consumer_info "stream" (Group.of_string "invalid") in
+    [%expect {| No_such_group |}];
     return ())
 ;;
 

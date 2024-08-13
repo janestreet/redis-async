@@ -8,7 +8,7 @@ module Replica = struct
       | Sync
       | Connected
       | Handshake
-          (** [Handshake] Undocumented. Can happen if the replica is unable to connect to the leader. *)
+      (** [Handshake] Undocumented. Can happen if the replica is unable to connect to the leader. *)
     [@@deriving sexp_of, compare]
 
     let of_string = function
@@ -45,6 +45,15 @@ module Replica = struct
       Ok { leader; connection_state; replication_offset }
     | resp3 -> Or_error.error_s [%message "Invalid Replica resp3:" (resp3 : Resp3.t list)]
   ;;
+
+  module For_test_with_deterministic_sexp = struct
+    type nonrec t = t =
+      { leader : Host_and_port.Hide_port_in_test.t
+      ; connection_state : Connection_state.t
+      ; replication_offset : (int[@sexp.opaque])
+      }
+    [@@deriving compare, sexp_of]
+  end
 end
 
 module Leader = struct
@@ -68,6 +77,14 @@ module Leader = struct
       | resp3 ->
         Or_error.error_s [%message "Invalid Leader Replica resp3:" (resp3 : Resp3.t)]
     ;;
+
+    module For_test_with_deterministic_sexp = struct
+      type nonrec t = t =
+        { where_to_connect : Host_and_port.Hide_port_in_test.t
+        ; replication_offset : (int[@sexp.opaque])
+        }
+      [@@deriving compare, sexp_of]
+    end
   end
 
   type t =
@@ -87,6 +104,14 @@ module Leader = struct
       Ok { replication_offset; replicas }
     | resp3 -> Or_error.error_s [%message "Invalid Leader resp3:" (resp3 : Resp3.t list)]
   ;;
+
+  module For_test_with_deterministic_sexp = struct
+    type nonrec t = t =
+      { replication_offset : (int[@sexp.opaque])
+      ; replicas : Replica.For_test_with_deterministic_sexp.t list
+      }
+    [@@deriving compare, sexp_of]
+  end
 end
 
 module Sentinel = struct
@@ -137,20 +162,10 @@ let of_resp3 = function
   | other -> Or_error.error_s [%message "Unexpected role response:" (other : Resp3.t)]
 ;;
 
-module For_testing = struct
-  let zero_port (host_and_port : Host_and_port.t) =
-    Host_and_port.create ~host:host_and_port.host ~port:0
-  ;;
-
-  let zero_ports (r : t) =
-    match r with
-    | Sentinel s -> Sentinel s
-    | Leader l ->
-      let replicas =
-        List.map l.replicas ~f:(fun r ->
-          { r with where_to_connect = zero_port r.where_to_connect })
-      in
-      Leader { l with replicas }
-    | Replica replica -> Replica { replica with leader = zero_port replica.leader }
-  ;;
+module For_test_with_deterministic_sexp = struct
+  type nonrec t = t =
+    | Leader of Leader.For_test_with_deterministic_sexp.t
+    | Replica of Replica.For_test_with_deterministic_sexp.t
+    | Sentinel of Sentinel.t
+  [@@deriving compare, sexp_of]
 end

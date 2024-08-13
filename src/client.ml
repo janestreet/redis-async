@@ -334,11 +334,11 @@ struct
         t.invalidations
         ~init:(false, [])
         ~f:(fun (was_changed, invalidations) invalidation ->
-        if Pipe.is_closed invalidation
-        then true, invalidations
-        else (
-          Pipe.write_without_pushback invalidation data;
-          was_changed, invalidation :: invalidations))
+          if Pipe.is_closed invalidation
+          then true, invalidations
+          else (
+            Pipe.write_without_pushback invalidation data;
+            was_changed, invalidation :: invalidations))
     in
     if was_changed
     then (
@@ -485,6 +485,13 @@ struct
 
   let has_close_started t = Writer.is_closed t.writer || Reader.is_closed t.reader
 
+  let connection_state t =
+    match Writer.is_closed t.writer, Reader.is_closed t.reader with
+    | true, true -> `Disconnected
+    | true, _ | _, true -> `Disconnecting
+    | false, false -> `Connected
+  ;;
+
   let create ?on_disconnect ?auth ~where_to_connect (_ : 'a) =
     let%bind.Deferred.Or_error _socket, reader, writer =
       (* Tcp.connect will raise if the connection attempt times out, but we'd prefer to
@@ -520,7 +527,7 @@ struct
       [ "HELLO"; "3" ]
       (* When protover (i.e. 2/3) is used, we can also pass [AUTH] and [SETNAME] to [HELLO]. *)
       @ Option.value_map auth ~default:[] ~f:(fun { Auth.username; password } ->
-          [ "AUTH"; username; password ])
+        [ "AUTH"; username; password ])
     in
     let%map.Deferred.Or_error (_ : Resp3.t String.Map.t) =
       command_string t cmds (Response.create_string_map ())
@@ -528,88 +535,104 @@ struct
     t
   ;;
 
-  let with_ ?on_disconnect ?auth ~where_to_connect f =
-    let%bind.Deferred.Or_error conn = create ?on_disconnect ?auth ~where_to_connect () in
-    Monitor.protect ~finally:(fun () -> close conn) (fun () -> f conn) |> Deferred.ok
+  let role conn = command_string conn [ "ROLE" ] (Response.create_role ())
+
+  let sentinel_get_leader_address (t : [< `Sentinel ] t) ~leader_name =
+    command_string
+      t
+      [ "SENTINEL"; "GET-MASTER-ADDR-BY-NAME"; leader_name ]
+      (Response.create_host_and_port ())
   ;;
 
-  let get_leader_address sentinel ~leader_name =
-    match%bind
+  let sentinel_replicas (t : [< `Sentinel ] t) ~leader_name =
+    let%bind.Deferred.Or_error result =
       command_string
-        sentinel
-        [ "SENTINEL"; "GET-MASTER-ADDR-BY-NAME"; leader_name ]
-        (Response.create_host_and_port ())
-    with
-    | Error e -> Deferred.Or_error.fail e
-    | Ok leader ->
-      Tcp.Where_to_connect.of_host_and_port leader |> Deferred.Or_error.return
+        t
+        [ "SENTINEL"; "REPLICAS"; leader_name ]
+        (Response.create_string_map_list ())
+    in
+    List.map result ~f:Sentinel.Replica.of_string_map
+    |> Or_error.combine_errors
+    |> Deferred.return
   ;;
 
-  let is_leader conn =
-    match%bind.Deferred.Or_error
-      command_string conn [ "ROLE" ] (Response.create_role ())
-    with
-    | (Sentinel _ | Replica _) as role ->
-      Deferred.Or_error.error_s [%message "Not the leader" (role : Role.t)]
-    | Leader _ -> Deferred.Or_error.ok_unit
-  ;;
+  (* Sentinel requires two connection steps:
 
-  let create_using_sentinel
+     1. Connect to the sentinel and ask for the leader address
+     2. Connect to the proposed leader and confirm that it is a leader
+
+     Read more here:
+     https://redis.io/docs/reference/sentinel-clients/#redis-service-discovery-via-sentinel
+
+     If all sentinels fail to connect or return a leader, then the client should return
+     an error. The leader node will disconnect from the client on failover, so the
+     client does not need to poll or listen to a subscription event to determine when to
+     disconnect from a stale leader.
+
+     The same is true for replicas: once we get a replica, we need to connect to
+     it to confirm that it is indeed a replica.
+  *)
+
+  let sentinel_connect_to_one_replica
+    (t : [< `Sentinel ] t)
     ?on_disconnect
-    ?sentinel_auth
     ?auth
+    ?(replica_priority_sorter = fun l -> List.permute l)
     ~leader_name
-    ~where_to_connect
     ()
     =
-    (* Sentinel requires two connection steps:
-
-       1. Connect to the sentinel and ask for the leader address
-       2. Connect to the proposed leader and confirm that it is a leader
-
-       Read more here:
-       https://redis.io/docs/reference/sentinel-clients/#redis-service-discovery-via-sentinel
-
-       If all sentinels fail to connect or return a leader, then the client should return
-       an error. The leader node will disconnect from the client on failover, so the
-       client does not need to poll or listen to a subscription event to determine when to
-       disconnect from a stale leader. *)
-    Deferred.Or_error.find_map_ok where_to_connect ~f:(fun sentinel_addr ->
-      let%bind.Deferred.Or_error leader_addr =
-        with_ ~where_to_connect:sentinel_addr ?auth:sentinel_auth (fun sentinel_conn ->
-          get_leader_address sentinel_conn ~leader_name
-          |> Deferred.Or_error.tag_s
-               ~tag:
-                 [%message
-                   "Failed to determine leader"
-                     ~leader_name
-                     (sentinel_addr : [< Socket.Address.t ] Tcp.Where_to_connect.t)])
-        |> Deferred.Or_error.tag_s ~tag:[%message "Failed to connect to sentinel"]
-        |> Deferred.map ~f:Or_error.join
+    let open Deferred.Or_error.Let_syntax in
+    let%bind replicas = sentinel_replicas t ~leader_name >>|? replica_priority_sorter in
+    Deferred.Or_error.find_map_ok replicas ~f:(fun replica ->
+      let replica_host_and_port = replica.Sentinel.Replica.host_and_port in
+      let where_to_connect =
+        Tcp.Where_to_connect.of_host_and_port replica_host_and_port
       in
-      let%bind.Deferred.Or_error leader_conn =
-        create ?on_disconnect ?auth ~where_to_connect:leader_addr ()
-        |> Deferred.Or_error.tag_s
-             ~tag:
-               [%message
-                 "Failed to connect to leader"
-                   ~leader_name
-                   (leader_addr : Tcp.Where_to_connect.inet)
-                   (sentinel_addr : [< Socket.Address.t ] Tcp.Where_to_connect.t)]
-      in
-      match%bind is_leader leader_conn with
-      | Ok () -> Deferred.Or_error.return leader_conn
+      let%bind conn = create ?on_disconnect ?auth ~where_to_connect () in
+      match%bind role conn with
+      | Replica _ -> return conn
+      | (Sentinel _ | Leader _) as role ->
+        let%bind.Deferred () = close conn in
+        Deferred.Or_error.error_s
+          [%message
+            "Not a replica" (role : Role.t) ~leader_name (replica : Sentinel.Replica.t)])
+  ;;
+
+  let sentinel_connect_to_leader
+    (t : [< `Sentinel ] t)
+    ?on_disconnect
+    ?auth
+    ~leader_name
+    ()
+    =
+    let open Deferred.Or_error.Let_syntax in
+    let%bind leader_addr =
+      match%map.Deferred sentinel_get_leader_address t ~leader_name with
       | Error error ->
-        let%bind () = close leader_conn in
-        Deferred.Or_error.fail
-          (Error.tag_s
-             error
-             ~tag:
-               [%message
-                 "Failed to verify leader"
-                   ~leader_name
-                   (leader_addr : Tcp.Where_to_connect.inet)
-                   (sentinel_addr : [< Socket.Address.t ] Tcp.Where_to_connect.t)]))
+        Or_error.error_s
+          [%message
+            "Error getting leader, maybe the server is not a sentinel?" (error : Error.t)]
+      | Ok leader -> Ok (Tcp.Where_to_connect.of_host_and_port leader)
+    in
+    let%bind leader_conn =
+      create ?on_disconnect ?auth ~where_to_connect:leader_addr ()
+      |> Deferred.Or_error.tag_s
+           ~tag:
+             [%message
+               "Failed to connect to redis"
+                 ~leader_name
+                 (leader_addr : Tcp.Where_to_connect.inet)]
+    in
+    match%bind role leader_conn with
+    | Leader _ -> return leader_conn
+    | (Sentinel _ | Replica _) as role ->
+      let%bind.Deferred () = close leader_conn in
+      Deferred.Or_error.error_s
+        [%message
+          "Not the leader"
+            (role : Role.t)
+            ~leader_name
+            (leader_addr : Tcp.Where_to_connect.inet)]
   ;;
 
   let client_tracking t ?(bcast = false) () =
@@ -721,15 +744,15 @@ struct
             write_array_el writer (module Bulk_io.String) channel;
             channel, r)
           |> List.fold ~init:Deferred.Or_error.ok_unit ~f:(fun acc (_channel, r) ->
-               match%bind.Deferred acc with
-               | Error error ->
-                 (* If there was an error, dequeue the next subscription request, as there will never be a response. *)
-                 ignore (Queue.dequeue_exn t.pending_response : (module Response_intf.S));
-                 Deferred.Or_error.fail error
-               | Ok () ->
-                 let (module R) = r in
-                 let%map.Deferred.Or_error _ = Ivar.read R.this in
-                 ()))
+            match%bind.Deferred acc with
+            | Error error ->
+              (* If there was an error, dequeue the next subscription request, as there will never be a response. *)
+              ignore (Queue.dequeue_exn t.pending_response : (module Response_intf.S));
+              Deferred.Or_error.fail error
+            | Ok () ->
+              let (module R) = r in
+              let%map.Deferred.Or_error _ = Ivar.read R.this in
+              ()))
       in
       subscription_reader
   ;;
