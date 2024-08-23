@@ -1,9 +1,8 @@
 open! Core
 open Async
-open Redis
 open Deferred.Or_error.Let_syntax
 module Expect_test_config = Expect_test_config_or_error
-module R = Redis.Make (Bulk_io.String) (Bulk_io.String)
+module R = Redis.String
 
 let with_sandbox f =
   let%bind () = Sandbox.run (module R) f in
@@ -25,7 +24,7 @@ let prints_without_spans sexp =
 
 let print_role r =
   let%map response = R.role r in
-  print_s ([%sexp_of: Role.For_test_with_deterministic_sexp.t] response)
+  print_s ([%sexp_of: Redis.Role.For_test_with_deterministic_sexp.t] response)
 ;;
 
 let%expect_test "Roles" =
@@ -157,17 +156,17 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
     [%test_eq: string option list] response [];
     let%bind response = R.del r [] in
     [%test_eq: int] response 0;
-    let%bind cursor, scan0 = R.scan r ~cursor:Cursor.zero ~count:1 () in
+    let%bind cursor, scan0 = R.scan r ~cursor:Redis.Cursor.zero ~count:1 () in
     let%bind cursor, scan1 = R.scan r ~cursor () in
     (* The SCAN test is written to show summary results because this command is
        intentionally non-deterministic (see documentation) *)
     print_s
-      ([%sexp_of: Cursor.t * string list]
+      ([%sexp_of: Redis.Cursor.t * string list]
          (cursor, List.dedup_and_sort ~compare:String.compare (scan0 @ scan1)));
     [%expect {| (0 (a baz color e foo)) |}];
-    let%bind cursor, scan3 = R.scan r ~cursor:Cursor.zero ~pattern:"[ab]*" () in
+    let%bind cursor, scan3 = R.scan r ~cursor:Redis.Cursor.zero ~pattern:"[ab]*" () in
     print_s
-      ([%sexp_of: Cursor.t * string list]
+      ([%sexp_of: Redis.Cursor.t * string list]
          (cursor, List.dedup_and_sort ~compare:String.compare scan3));
     [%expect {| (0 (a baz)) |}];
     let%bind () = R.set r "has expire" "x" ~expire:Time_ns.Span.hour in
@@ -373,7 +372,7 @@ let%expect_test "sorted set commands" =
     let%bind response = R.zrank r key_1 "e" in
     [%test_eq: [ `Rank of int ] option] response (Some (`Rank 1));
     let%bind response = R.raw_command r [ "echo"; "hello" ] in
-    print_s ([%sexp_of: Resp3.t] response);
+    print_s ([%sexp_of: Redis.Resp3.t] response);
     [%expect {| (String hello) |}];
     let%bind response = R.version r in
     print_endline response;
@@ -427,11 +426,13 @@ let%expect_test "hash commands" =
     let%bind (_ : int) = R.hset r key_1 values in
     let%bind response =
       Deferred.Or_error.repeat_until_finished
-        (Cursor.zero (* cursor *), [] (* values *))
+        (Redis.Cursor.zero (* cursor *), [] (* values *))
         (fun (cursor, values) ->
            let%map cursor, new_values = R.hscan r ~cursor ~count:2 key_1 in
            let values = values @ new_values in
-           if Cursor.(cursor = zero) then `Finished values else `Repeat (cursor, values))
+           if Redis.Cursor.(cursor = zero)
+           then `Finished values
+           else `Repeat (cursor, values))
       >>| List.dedup_and_sort ~compare:[%compare: string * string]
     in
     [%test_eq: (string * string) list] response values;
@@ -479,7 +480,7 @@ let%expect_test "Bin_prot" =
     end
 
     include T
-    include Bulk_io.Make_binable (T)
+    include Redis.Bulk_io.Make_binable (T)
   end
   in
   let module Value = struct
@@ -492,12 +493,12 @@ let%expect_test "Bin_prot" =
     end
 
     include T
-    include Bulk_io.Make_binable (T)
+    include Redis.Bulk_io.Make_binable (T)
   end
   in
   let module Int_value = struct
     include Int
-    include Bulk_io.Make_binable (Int)
+    include Redis.Bulk_io.Make_binable (Int)
   end
   in
   let module R = Redis.Make (Key) (Value) in
@@ -518,7 +519,7 @@ let%expect_test "Bin_prot" =
     end
 
     include T
-    include Bulk_io.Make_binable (T)
+    include Redis.Bulk_io.Make_binable (T)
   end
   in
   let module Redis_with_wrong_value = Redis.Make (Key) (Wrong_value) in
@@ -654,9 +655,9 @@ let get_subscriptions r =
   | Array array ->
     Array.map array ~f:(function
       | String str -> str
-      | resp3 -> raise_s [%message "Unexpected resp3 channel" (resp3 : Resp3.t)])
+      | resp3 -> raise_s [%message "Unexpected resp3 channel" (resp3 : Redis.Resp3.t)])
     |> String.Set.of_array
-  | resp3 -> raise_s [%message "Unexpected resp3 response" (resp3 : Resp3.t)]
+  | resp3 -> raise_s [%message "Unexpected resp3 response" (resp3 : Redis.Resp3.t)]
 ;;
 
 let%expect_test "unsubscribing works" =
@@ -718,7 +719,7 @@ let%expect_test "an unsubscribe and a resubscribe should maintain the subscripti
 let get_number_of_pattern_subscriptions r =
   match%map R.raw_command r [ "PUBSUB"; "NUMPAT" ] with
   | Int n -> n
-  | resp3 -> raise_s [%message "Unexpected resp3" (resp3 : Resp3.t)]
+  | resp3 -> raise_s [%message "Unexpected resp3" (resp3 : Redis.Resp3.t)]
 ;;
 
 let%expect_test "punsubscribing works" =
@@ -773,8 +774,10 @@ let%expect_test "keyspace notifications" =
       print_s
         [%message
           ""
-            ~keyevent:(Pipe.read_now' keyevent_reader : Key_event.t Subscription_data.t)
-            ~keyspace:(Pipe.read_now' keyspace_reader : Key_event.t Subscription_data.t)]
+            ~keyevent:
+              (Pipe.read_now' keyevent_reader : Redis.Key_event.t Subscription_data.t)
+            ~keyspace:
+              (Pipe.read_now' keyspace_reader : Redis.Key_event.t Subscription_data.t)]
     in
     p ();
     [%expect {| ((keyevent Nothing_available) (keyspace Nothing_available)) |}];
@@ -809,7 +812,9 @@ let%expect_test "keyspace notifications with specific keys" =
     let p () =
       print_s
         [%message
-          "" ~keyspace:(Pipe.read_now' keyspace_reader : Key_event.t Subscription_data.t)]
+          ""
+            ~keyspace:
+              (Pipe.read_now' keyspace_reader : Redis.Key_event.t Subscription_data.t)]
     in
     p ();
     [%expect {| (keyspace Nothing_available) |}];
@@ -884,17 +889,21 @@ let%expect_test "Streams" =
     [%expect {| "<stream id>" |}];
     let%bind _ = R.xadd r "mystream" [ "sensor-id", "2345"; "temperature", "12.3" ] in
     let%bind response =
-      R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-1") [ "field", "value" ]
+      R.xadd
+        r
+        "somestream"
+        ~stream_id:(Redis.Stream_id.of_string "0-1")
+        [ "field", "value" ]
     in
     print_s ([%sexp_of: Redis.Stream_id.t] response);
     [%expect {| 0-1 |}];
     let%bind response =
-      R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-2") [ "foo", "bar" ]
+      R.xadd r "somestream" ~stream_id:(Redis.Stream_id.of_string "0-2") [ "foo", "bar" ]
     in
     print_s ([%sexp_of: Redis.Stream_id.t] response);
     [%expect {| 0-2 |}];
     let%bind.Deferred response =
-      R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-1") [ "foo", "bar" ]
+      R.xadd r "somestream" ~stream_id:(Redis.Stream_id.of_string "0-1") [ "foo", "bar" ]
     in
     print_s ([%sexp_of: Redis.Stream_id.t Or_error.t] response);
     [%expect
@@ -903,7 +912,7 @@ let%expect_test "Streams" =
        "ERR The ID specified in XADD is equal or smaller than the target stream top item")
       |}];
     let%bind response =
-      R.xadd r "somestream" ~stream_id:(Stream_id.of_string "0-*") [ "baz", "qux" ]
+      R.xadd r "somestream" ~stream_id:(Redis.Stream_id.of_string "0-*") [ "baz", "qux" ]
     in
     print_s ([%sexp_of: Redis.Stream_id.t] response);
     [%expect {| 0-3 |}];
@@ -924,7 +933,7 @@ let%expect_test "Streams" =
     let%bind response = R.xrevrange r "invalid key" () in
     print_s ([%sexp_of: (Test_stream_id.t * (string * string) list) list] response);
     [%expect {| () |}];
-    let group = Group.of_string "mygroup" in
+    let group = Redis.Group.of_string "mygroup" in
     let%bind response = R.xgroup_create r "stream" group ~mkstream:() () in
     print_s ([%sexp_of: [ `Ok | `Already_exists ]] response);
     [%expect {| Ok |}];
@@ -940,7 +949,7 @@ let%expect_test "Streams" =
     print_s ([%sexp_of: [ `Ok | `Already_exists ]] response);
     [%expect {| Already_exists |}];
     let%bind response =
-      R.xreadgroup r group (Consumer.of_string "Alice") ~count:4 [ "stream", None ]
+      R.xreadgroup r group (Redis.Consumer.of_string "Alice") ~count:4 [ "stream", None ]
     in
     print_s
       ([%sexp_of: (string * (Test_stream_id.t * (string * string) list) list) list]
@@ -955,10 +964,10 @@ let%expect_test "Streams" =
     let extract_id i = fst (List.nth_exn (snd (List.hd_exn response)) i) in
     let stream_id_0 = extract_id 0 in
     let stream_id_1 = extract_id 1 in
-    let alice = Consumer.of_string "Alice" in
+    let alice = Redis.Consumer.of_string "Alice" in
     let stream_id_2 = extract_id 2 in
     let stream_id_3 = extract_id 3 in
-    let bob = Consumer.of_string "Bob" in
+    let bob = Redis.Consumer.of_string "Bob" in
     let%bind stream_ids =
       R.xclaim_justid
         r
@@ -968,7 +977,7 @@ let%expect_test "Streams" =
         ~min_idle_time:Time_ns.Span.zero
         [ stream_id_0; stream_id_1; stream_id_2; stream_id_3 ]
     in
-    [%test_eq: Stream_id.t list]
+    [%test_eq: Redis.Stream_id.t list]
       stream_ids
       [ stream_id_0; stream_id_1; stream_id_2; stream_id_3 ];
     let%bind result = R.xpending_extended r "invalid" group ~count:2 () in
@@ -1008,7 +1017,7 @@ let%expect_test "Streams" =
     let print_consumer_info stream group =
       let%map response = R.xinfo_consumers r stream group in
       prints_without_spans
-        ([%sexp_of: [ `No_such_group | `No_such_key | `Ok of Consumer_info.t list ]]
+        ([%sexp_of: [ `No_such_group | `No_such_key | `Ok of Redis.Consumer_info.t list ]]
            response)
     in
     let%bind result = R.xgroup_delconsumer r "stream" group bob in
@@ -1018,7 +1027,7 @@ let%expect_test "Streams" =
     [%expect {| (Ok (((name Alice) (pending 3) (idle SPAN) (inactive (SPAN))))) |}];
     let%bind () = print_consumer_info "invalid" group in
     [%expect {| No_such_key |}];
-    let%bind () = print_consumer_info "stream" (Group.of_string "invalid") in
+    let%bind () = print_consumer_info "stream" (Redis.Group.of_string "invalid") in
     [%expect {| No_such_group |}];
     return ())
 ;;

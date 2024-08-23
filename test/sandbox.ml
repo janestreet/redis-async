@@ -5,7 +5,7 @@ open Deferred.Or_error.Let_syntax
 
 let redis_server_binary () = Deferred.return "/usr/bin/redis-server"
 
-module Redis_string = Redis.Make (Redis.Bulk_io.String) (Redis.Bulk_io.String)
+module Redis_string = Redis.String
 
 let mkdtmp () = Unix.mkdtemp "/dev/shm/redis"
 
@@ -246,7 +246,7 @@ let run_sentinel
   Monitor.protect ~finally:(fun () -> R.close s) (fun () -> f s ~leader_name)
 ;;
 
-module R = Redis.Make (Redis.Bulk_io.String) (Redis.Bulk_io.String)
+module R = Redis.String
 
 let teardown ?on_disconnect () =
   let disconnect (where_to_connect, type_) =

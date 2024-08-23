@@ -859,3 +859,5 @@ end
 
 module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) =
   Make_field (Key) (Bulk_io.String) (Value)
+
+module String = Make (Bulk_io.String) (Bulk_io.String)
