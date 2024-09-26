@@ -32,7 +32,7 @@ struct
   ;;
 
   let create ?on_disconnect ?auth ~where_to_connect () =
-    create' ?on_disconnect ?auth ~where_to_connect `Primary
+    create' ?on_disconnect ?auth ~where_to_connect `Leader
   ;;
 
   let select t index = command_string t [ "SELECT"; itoa index ] (Response.create_ok ())
@@ -859,3 +859,5 @@ end
 
 module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) =
   Make_field (Key) (Bulk_io.String) (Value)
+
+module String = Make (Bulk_io.String) (Bulk_io.String)

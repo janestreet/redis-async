@@ -22,3 +22,11 @@ module Make (Key : Bulk_io.S) (Value : Bulk_io.S) :
 
 module Make_field (Key : Bulk_io.S) (Field : Bulk_io.S) (Value : Bulk_io.S) :
   S with module Key = Key and module Field = Field and module Value = Value
+
+(* A client that operates only on strings. This is used in many places where a basic
+   client is all that is needed. *)
+module String :
+  S
+  with module Key = Bulk_io.String
+   and module Field = Bulk_io.String
+   and module Value = Bulk_io.String

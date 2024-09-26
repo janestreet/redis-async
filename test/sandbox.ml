@@ -5,7 +5,7 @@ open Deferred.Or_error.Let_syntax
 
 let redis_server_binary () = Deferred.return "/usr/bin/redis-server"
 
-module Redis_string = Redis.Make (Redis.Bulk_io.String) (Redis.Bulk_io.String)
+module Redis_string = Redis.String
 
 let mkdtmp () = Unix.mkdtemp "/dev/shm/redis"
 
@@ -116,7 +116,7 @@ let where_to_connect_leader () =
     let open Set_once.Optional_syntax in
     match%optional l with
     | None ->
-      let where_to_connect = create_with_sock `Primary in
+      let where_to_connect = create_with_sock `Leader in
       Set_once.set_exn l [%here] where_to_connect;
       where_to_connect
     | Some where_to_connect -> where_to_connect
@@ -246,7 +246,7 @@ let run_sentinel
   Monitor.protect ~finally:(fun () -> R.close s) (fun () -> f s ~leader_name)
 ;;
 
-module R = Redis.Make (Redis.Bulk_io.String) (Redis.Bulk_io.String)
+module R = Redis.String
 
 let teardown ?on_disconnect () =
   let disconnect (where_to_connect, type_) =
@@ -258,5 +258,5 @@ let teardown ?on_disconnect () =
   let%bind _, leader = where_to_connect () in
   (* The order we shutdown matters due to inter-dependencies. *)
   Deferred.Or_error.combine_errors_unit
-    (List.map [ sentinel, `Sentinel; replica, `Replica; leader, `Primary ] ~f:disconnect)
+    (List.map [ sentinel, `Sentinel; replica, `Replica; leader, `Leader ] ~f:disconnect)
 ;;

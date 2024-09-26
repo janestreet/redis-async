@@ -1,8 +1,7 @@
 open Core
 open Async
 open Deferred.Or_error.Let_syntax
-open Redis
-module R = Redis.Make (Bulk_io.String) (Bulk_io.String)
+module R = Redis.String
 module Expect_test_config = Expect_test_config_or_error
 
 let weak_to_connected_redis () =
