@@ -38,6 +38,11 @@ module type S = sig
     -> unit
     -> [ `Leader ] t Deferred.Or_error.t
 
+  val sentinel_leader
+    :  [< `Sentinel ] t
+    -> leader_name:string
+    -> Sentinel.Leader.t Deferred.Or_error.t
+
   val sentinel_replicas
     :  [< `Sentinel ] t
     -> leader_name:string

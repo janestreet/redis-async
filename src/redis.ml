@@ -855,6 +855,16 @@ struct
       raise_s
         [%message [%here] "Unexpected response to xpending_extended" (resp3 : Resp3.t)]
   ;;
+
+  let sentinel_leader (t : [< `Sentinel ] t) ~leader_name =
+    let%bind result =
+      command_string
+        t
+        [ "SENTINEL"; "MASTER"; leader_name ]
+        (Response.create_string_map ())
+    in
+    Sentinel.Leader.of_string_map result |> Deferred.return
+  ;;
 end
 
 module Make (Key : Bulk_io_intf.S) (Value : Bulk_io_intf.S) =
