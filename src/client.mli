@@ -50,7 +50,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> ?auth:Auth.t
     -> leader_name:string
     -> unit
-    -> [< `Primary ] t Deferred.Or_error.t
+    -> [< `Leader ] t Deferred.Or_error.t
 
   val close : _ t -> unit Deferred.t
   val close_finished : _ t -> unit Deferred.t
@@ -193,7 +193,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
       @param bcast Whether to use broadcast mode. Off by default.
   *)
   val client_tracking
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> ?bcast:bool
     -> unit
     -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
@@ -202,7 +202,7 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
       channel share the same redis subscription. If all readers subscribed to a channel
       close their pipe, an unsubscribe would eventually be issued. *)
   val subscribe_raw
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> [ `Literal of string list | `Pattern of string list ]
     -> consume:((read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a)
     -> 'a Pipe.Reader.t Deferred.Or_error.t

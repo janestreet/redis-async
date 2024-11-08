@@ -27,7 +27,7 @@ val run
         with type Key.t = 'key
          and type Field.t = 'field
          and type Value.t = 'value)
-  -> (([ `Primary ], 'key, 'field, 'value) Redis.t -> unit Deferred.Or_error.t)
+  -> (([ `Leader ], 'key, 'field, 'value) Redis.t -> unit Deferred.Or_error.t)
   -> unit Deferred.Or_error.t
 
 (** Runs a command on a read-only replica *)

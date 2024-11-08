@@ -32,7 +32,7 @@ struct
   ;;
 
   let create ?on_disconnect ?auth ~where_to_connect () =
-    create' ?on_disconnect ?auth ~where_to_connect `Primary
+    create' ?on_disconnect ?auth ~where_to_connect `Leader
   ;;
 
   let select t index = command_string t [ "SELECT"; itoa index ] (Response.create_ok ())
@@ -202,7 +202,13 @@ struct
   ;;
 
   let srem t key values =
-    command_keys_values t [ "SREM" ] [ key ] values (Response.create_int ())
+    command_keys_values
+      ~result_of_empty_input:(Ok 0)
+      t
+      [ "SREM" ]
+      [ key ]
+      values
+      (Response.create_int ())
   ;;
 
   let sscan t ~cursor ?count ?pattern k =
@@ -854,6 +860,16 @@ struct
     | Ok resp3 ->
       raise_s
         [%message [%here] "Unexpected response to xpending_extended" (resp3 : Resp3.t)]
+  ;;
+
+  let sentinel_leader (t : [< `Sentinel ] t) ~leader_name =
+    let%bind result =
+      command_string
+        t
+        [ "SENTINEL"; "MASTER"; leader_name ]
+        (Response.create_string_map ())
+    in
+    Sentinel.Leader.of_string_map result |> Deferred.return
   ;;
 end
 

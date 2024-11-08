@@ -116,7 +116,7 @@ let where_to_connect_leader () =
     let open Set_once.Optional_syntax in
     match%optional l with
     | None ->
-      let where_to_connect = create_with_sock `Primary in
+      let where_to_connect = create_with_sock `Leader in
       Set_once.set_exn l [%here] where_to_connect;
       where_to_connect
     | Some where_to_connect -> where_to_connect
@@ -258,5 +258,5 @@ let teardown ?on_disconnect () =
   let%bind _, leader = where_to_connect () in
   (* The order we shutdown matters due to inter-dependencies. *)
   Deferred.Or_error.combine_errors_unit
-    (List.map [ sentinel, `Sentinel; replica, `Replica; leader, `Primary ] ~f:disconnect)
+    (List.map [ sentinel, `Sentinel; replica, `Replica; leader, `Leader ] ~f:disconnect)
 ;;

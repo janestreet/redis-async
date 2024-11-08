@@ -36,7 +36,12 @@ module type S = sig
     -> ?auth:Auth.t
     -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t
     -> unit
-    -> [ `Primary ] t Deferred.Or_error.t
+    -> [ `Leader ] t Deferred.Or_error.t
+
+  val sentinel_leader
+    :  [< `Sentinel ] t
+    -> leader_name:string
+    -> Sentinel.Leader.t Deferred.Or_error.t
 
   val sentinel_replicas
     :  [< `Sentinel ] t
@@ -68,7 +73,7 @@ module type S = sig
     -> ?auth:Auth.t
     -> leader_name:string
     -> unit
-    -> [< `Primary ] t Deferred.Or_error.t
+    -> [< `Leader ] t Deferred.Or_error.t
 
   val close : _ t -> unit Deferred.t
   val close_finished : _ t -> unit Deferred.t
@@ -77,38 +82,34 @@ module type S = sig
 
   (** Redis commands are documented at: https://redis.io/commands *)
 
-  val select : [< `Primary | `Replica ] t -> int -> unit Deferred.Or_error.t
-  val flushall : [< `Primary ] t -> unit Deferred.Or_error.t
-  val flushdb : [< `Primary ] t -> unit Deferred.Or_error.t
-  val shutdown : [< `Primary | `Replica | `Sentinel ] t -> unit Deferred.Or_error.t
-  val echo : [< `Primary | `Replica ] t -> Key.t -> Key.t Deferred.Or_error.t
-
-  val ping
-    :  [< `Primary | `Replica | `Sentinel ] t
-    -> string
-    -> string Deferred.Or_error.t
+  val select : [< `Leader | `Replica ] t -> int -> unit Deferred.Or_error.t
+  val flushall : [< `Leader ] t -> unit Deferred.Or_error.t
+  val flushdb : [< `Leader ] t -> unit Deferred.Or_error.t
+  val shutdown : [< `Leader | `Replica | `Sentinel ] t -> unit Deferred.Or_error.t
+  val echo : [< `Leader | `Replica ] t -> Key.t -> Key.t Deferred.Or_error.t
+  val ping : [< `Leader | `Replica | `Sentinel ] t -> string -> string Deferred.Or_error.t
 
   val wait
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> num_replicas:int
     -> timeout:[ `Never | `After of Time_ns.Span.t ]
     -> int Deferred.Or_error.t
 
-  val incr : [< `Primary ] t -> Key.t -> int Deferred.Or_error.t
-  val del : [< `Primary ] t -> Key.t list -> int Deferred.Or_error.t
-  val unlink : [< `Primary ] t -> Key.t list -> int Deferred.Or_error.t
-  val dbsize : [< `Primary | `Replica ] t -> int Deferred.Or_error.t
-  val exists : [< `Primary | `Replica ] t -> Key.t list -> int Deferred.Or_error.t
+  val incr : [< `Leader ] t -> Key.t -> int Deferred.Or_error.t
+  val del : [< `Leader ] t -> Key.t list -> int Deferred.Or_error.t
+  val unlink : [< `Leader ] t -> Key.t list -> int Deferred.Or_error.t
+  val dbsize : [< `Leader | `Replica ] t -> int Deferred.Or_error.t
+  val exists : [< `Leader | `Replica ] t -> Key.t list -> int Deferred.Or_error.t
 
   val keys
     :  ?pattern:string (** defaults to '*' *)
-    -> [< `Primary | `Replica ] t
+    -> [< `Leader | `Replica ] t
     -> Key.t list Deferred.Or_error.t
 
-  val rename : [< `Primary ] t -> Key.t -> new_key:Key.t -> unit Deferred.Or_error.t
+  val rename : [< `Leader ] t -> Key.t -> new_key:Key.t -> unit Deferred.Or_error.t
 
   val scan
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> cursor:Cursor.t
     -> ?count:int
     -> ?pattern:string
@@ -128,47 +129,47 @@ module type S = sig
       @param bcast Whether to use BCAST. Off by default.
   *)
   val client_tracking
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> ?bcast:bool
     -> unit
     -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
 
   val set
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> ?expire:Time_ns.Span.t
     -> Value.t
     -> unit Deferred.Or_error.t
 
-  val setnx : [< `Primary ] t -> Key.t -> Value.t -> bool Deferred.Or_error.t
-  val mset : [< `Primary ] t -> (Key.t * Value.t) list -> unit Deferred.Or_error.t
-  val msetnx : [< `Primary ] t -> (Key.t * Value.t) list -> bool Deferred.Or_error.t
-  val get : [< `Primary | `Replica ] t -> Key.t -> Value.t option Deferred.Or_error.t
+  val setnx : [< `Leader ] t -> Key.t -> Value.t -> bool Deferred.Or_error.t
+  val mset : [< `Leader ] t -> (Key.t * Value.t) list -> unit Deferred.Or_error.t
+  val msetnx : [< `Leader ] t -> (Key.t * Value.t) list -> bool Deferred.Or_error.t
+  val get : [< `Leader | `Replica ] t -> Key.t -> Value.t option Deferred.Or_error.t
 
   val mget
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t list
     -> Value.t option list Deferred.Or_error.t
 
-  val smembers : [< `Primary | `Replica ] t -> Key.t -> Value.t list Deferred.Or_error.t
+  val smembers : [< `Leader | `Replica ] t -> Key.t -> Value.t list Deferred.Or_error.t
 
   val sismember
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> Value.t
     -> bool Deferred.Or_error.t
 
   val smismember
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> Value.t list
     -> bool list Deferred.Or_error.t
 
-  val sadd : [< `Primary ] t -> Key.t -> Value.t list -> int Deferred.Or_error.t
-  val srem : [< `Primary ] t -> Key.t -> Value.t list -> int Deferred.Or_error.t
+  val sadd : [< `Leader ] t -> Key.t -> Value.t list -> int Deferred.Or_error.t
+  val srem : [< `Leader ] t -> Key.t -> Value.t list -> int Deferred.Or_error.t
 
   val sscan
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> cursor:Cursor.t
     -> ?count:int
     -> ?pattern:string
@@ -176,119 +177,119 @@ module type S = sig
     -> (Cursor.t * Value.t list) Deferred.Or_error.t
 
   val zadd
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> ([ `Score of float ] * Value.t) list
     -> int Deferred.Or_error.t
 
-  val zrem : [< `Primary ] t -> Key.t -> Value.t list -> int Deferred.Or_error.t
+  val zrem : [< `Leader ] t -> Key.t -> Value.t list -> int Deferred.Or_error.t
 
   val pttl
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> [ `Timeout of Time_ns.Span.t | `No_timeout | `No_key ] Deferred.Or_error.t
 
   val pexpire
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> ?nx:bool
     -> Time_ns.Span.t
     -> [ `Set | `Not_set ] Deferred.Or_error.t
 
   val pexpireat
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> ?nx:bool
     -> Time_ns.t
     -> [ `Set | `Not_set ] Deferred.Or_error.t
 
-  val zcard : [< `Primary | `Replica ] t -> Key.t -> int Deferred.Or_error.t
+  val zcard : [< `Leader | `Replica ] t -> Key.t -> int Deferred.Or_error.t
 
   val zrange
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> min_index:int
     -> max_index:int
     -> Value.t list Deferred.Or_error.t
 
   val zscore
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> Value.t
     -> [ `Score of float ] option Deferred.Or_error.t
 
   val zrank
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> Value.t
     -> [ `Rank of int ] option Deferred.Or_error.t
 
   val zrangebylex
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> min:Value.t Maybe_bound.t
     -> max:Value.t Maybe_bound.t
     -> Value.t list Deferred.Or_error.t
 
   val zrangebyscore
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> min_score:float Maybe_bound.t
     -> max_score:float Maybe_bound.t
     -> Value.t list Deferred.Or_error.t
 
   val zrangebyscore_withscores
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> min_score:float Maybe_bound.t
     -> max_score:float Maybe_bound.t
     -> (Value.t * [ `Score of float ]) list Deferred.Or_error.t
 
   val zremrangebyscore
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> min_score:float Maybe_bound.t
     -> max_score:float Maybe_bound.t
     -> int Deferred.Or_error.t
 
-  val hexists : [< `Primary | `Replica ] t -> Key.t -> Field.t -> bool Deferred.Or_error.t
+  val hexists : [< `Leader | `Replica ] t -> Key.t -> Field.t -> bool Deferred.Or_error.t
 
   val hset
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> (Field.t * Value.t) list
     -> int Deferred.Or_error.t
 
   val hsetnx
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> (Field.t * Value.t) list
     -> int Deferred.Or_error.t
 
   val hget
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> Field.t
     -> Value.t option Deferred.Or_error.t
 
   val hmget
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> Field.t list
     -> Value.t option list Deferred.Or_error.t
 
   val hgetall
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> (Field.t * Value.t) list Deferred.Or_error.t
 
-  val hvals : [< `Primary | `Replica ] t -> Key.t -> Value.t list Deferred.Or_error.t
-  val hkeys : [< `Primary | `Replica ] t -> Key.t -> Field.t list Deferred.Or_error.t
-  val hlen : [< `Primary | `Replica ] t -> Key.t -> int Deferred.Or_error.t
-  val hdel : [< `Primary ] t -> Key.t -> Field.t list -> int Deferred.Or_error.t
+  val hvals : [< `Leader | `Replica ] t -> Key.t -> Value.t list Deferred.Or_error.t
+  val hkeys : [< `Leader | `Replica ] t -> Key.t -> Field.t list Deferred.Or_error.t
+  val hlen : [< `Leader | `Replica ] t -> Key.t -> int Deferred.Or_error.t
+  val hdel : [< `Leader ] t -> Key.t -> Field.t list -> int Deferred.Or_error.t
 
   val hscan
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> cursor:Cursor.t
     -> ?count:int
     -> ?pattern:string
@@ -296,50 +297,50 @@ module type S = sig
     -> (Cursor.t * (Field.t * Value.t) list) Deferred.Or_error.t
 
   val keyevent_notifications
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> ([< Key_event.t ] as 'a) list
     -> ('a * Key.t) Pipe.Reader.t Deferred.Or_error.t
 
   val keyspace_notifications
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> ([< Key_event.t ] as 'a) list
     -> [ `Patterns of string list | `Keys of Key.t list ]
     -> ('a * Key.t) Pipe.Reader.t Deferred.Or_error.t
 
-  val publish : [< `Primary | `Replica ] t -> string -> Key.t -> int Deferred.Or_error.t
+  val publish : [< `Leader | `Replica ] t -> string -> Key.t -> int Deferred.Or_error.t
 
   val subscribe
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> string list
     -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
 
   val subscribe_raw
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> [ `Literal of string list | `Pattern of string list ]
     -> consume:((read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a)
     -> 'a Pipe.Reader.t Deferred.Or_error.t
 
   val psubscribe
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> string list
     -> (string * Key.t) Pipe.Reader.t Deferred.Or_error.t
 
-  val script_load : [< `Primary | `Replica ] t -> string -> Sha1.t Deferred.Or_error.t
+  val script_load : [< `Leader | `Replica ] t -> string -> Sha1.t Deferred.Or_error.t
 
   val evalsha
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Sha1.t
     -> Key.t list
     -> Value.t list
     -> Resp3.t Deferred.Or_error.t
 
   val raw_command
-    :  [< `Primary | `Replica | `Sentinel ] t
+    :  [< `Leader | `Replica | `Sentinel ] t
     -> string list
     -> Resp3.t Deferred.Or_error.t
 
-  val version : [< `Primary | `Replica | `Sentinel ] t -> string Deferred.Or_error.t
-  val role : [< `Primary | `Replica | `Sentinel ] t -> Role.t Deferred.Or_error.t
+  val version : [< `Leader | `Replica | `Sentinel ] t -> string Deferred.Or_error.t
+  val role : [< `Leader | `Replica | `Sentinel ] t -> Role.t Deferred.Or_error.t
 
   (** ACL and authentication commands.
 
@@ -349,29 +350,26 @@ module type S = sig
       https://redis.io/docs/manual/security/acl/#selectors
   *)
   val acl_setuser
-    :  [< `Primary | `Replica | `Sentinel ] t
+    :  [< `Leader | `Replica | `Sentinel ] t
     -> username:string
     -> rules:string list
     -> unit Deferred.Or_error.t
 
   val acl_deluser
-    :  [< `Primary | `Replica | `Sentinel ] t
+    :  [< `Leader | `Replica | `Sentinel ] t
     -> string list
     -> int Deferred.Or_error.t
 
-  val acl_users
-    :  [< `Primary | `Replica | `Sentinel ] t
-    -> string list Deferred.Or_error.t
-
-  val acl_list : [< `Primary | `Replica | `Sentinel ] t -> string list Deferred.Or_error.t
+  val acl_users : [< `Leader | `Replica | `Sentinel ] t -> string list Deferred.Or_error.t
+  val acl_list : [< `Leader | `Replica | `Sentinel ] t -> string list Deferred.Or_error.t
 
   val acl_getuser
-    :  [< `Primary | `Replica | `Sentinel ] t
+    :  [< `Leader | `Replica | `Sentinel ] t
     -> username:string
     -> Resp3.t Deferred.Or_error.t
 
   val auth
-    :  [< `Primary | `Replica | `Sentinel ] t
+    :  [< `Leader | `Replica | `Sentinel ] t
     -> auth:Auth.t
     -> unit
     -> unit Deferred.Or_error.t
@@ -384,17 +382,17 @@ module type S = sig
       | Exclusive of Stream_id.t
   end
 
-  val xlen : [< `Primary | `Replica ] t -> Key.t -> int Deferred.Or_error.t
+  val xlen : [< `Leader | `Replica ] t -> Key.t -> int Deferred.Or_error.t
 
   val xadd
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> ?stream_id:Stream_id.t
     -> (Field.t * Value.t) list
     -> Stream_id.t Deferred.Or_error.t
 
   val xgroup_create
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> Group.t
     -> ?stream_id:Stream_id.t
@@ -403,7 +401,7 @@ module type S = sig
     -> [ `Ok | `Already_exists ] Deferred.Or_error.t
 
   val xrange
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> ?start:Stream_range.t
     -> ?end_:Stream_range.t
@@ -412,7 +410,7 @@ module type S = sig
     -> (Stream_id.t * (Field.t * Value.t) list) list Deferred.Or_error.t
 
   val xrevrange
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Key.t
     -> ?end_:Stream_range.t
     -> ?start:Stream_range.t
@@ -421,7 +419,7 @@ module type S = sig
     -> (Stream_id.t * (Field.t * Value.t) list) list Deferred.Or_error.t
 
   val xreadgroup
-    :  [< `Primary | `Replica ] t
+    :  [< `Leader | `Replica ] t
     -> Group.t
     -> Consumer.t
     -> ?count:int
@@ -430,7 +428,7 @@ module type S = sig
     -> (Key.t * (Stream_id.t * (Field.t * Value.t) list) list) list Deferred.Or_error.t
 
   val xclaim
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> ?idle:Time_ns.Span.t
     -> Key.t
     -> Group.t
@@ -440,7 +438,7 @@ module type S = sig
     -> (Stream_id.t * (Field.t * Value.t) list) list Deferred.Or_error.t
 
   val xclaim_justid
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> ?idle:Time_ns.Span.t
     -> Key.t
     -> Group.t
@@ -450,7 +448,7 @@ module type S = sig
     -> Stream_id.t list Deferred.Or_error.t
 
   val xautoclaim
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> Group.t
     -> Consumer.t
@@ -464,27 +462,27 @@ module type S = sig
          Deferred.Or_error.t
 
   val xack
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> Group.t
     -> Stream_id.t list
     -> int Deferred.Or_error.t
 
   val xinfo_consumers
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> Group.t
     -> [ `Ok of Consumer_info.t list | `No_such_key | `No_such_group ] Deferred.Or_error.t
 
   val xgroup_delconsumer
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> Group.t
     -> Consumer.t
     -> int Deferred.Or_error.t
 
   val xpending_extended
-    :  [< `Primary ] t
+    :  [< `Leader ] t
     -> Key.t
     -> Group.t
     -> ?start:Stream_range.t
