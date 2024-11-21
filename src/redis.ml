@@ -202,7 +202,13 @@ struct
   ;;
 
   let srem t key values =
-    command_keys_values t [ "SREM" ] [ key ] values (Response.create_int ())
+    command_keys_values
+      ~result_of_empty_input:(Ok 0)
+      t
+      [ "SREM" ]
+      [ key ]
+      values
+      (Response.create_int ())
   ;;
 
   let sscan t ~cursor ?count ?pattern k =
