@@ -1,6 +1,5 @@
 (** The return value for the XINFO CONSUMERS command
-    https://redis.io/commands/xinfo-consumers/
-*)
+    https://redis.io/commands/xinfo-consumers/ *)
 
 open! Core
 
@@ -18,8 +17,7 @@ val of_resp3 : Resp3.t -> t Or_error.t
     interaction. In 7.2.0, inactive was added and idle was changed to denote the time
     passed since last attempted interaction.
 
-    https://redis.io/docs/latest/commands/xinfo-consumers/
-*)
+    https://redis.io/docs/latest/commands/xinfo-consumers/ *)
 val last_successful_interaction : t -> Time_ns.Span.t
 
 val last_attempted_interaction : t -> Time_ns.Span.t option

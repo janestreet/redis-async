@@ -1,6 +1,4 @@
-(** The role of a Redis node as described by
-    https://redis.io/commands/role/
-*)
+(** The role of a Redis node as described by https://redis.io/commands/role/ *)
 
 open Core
 

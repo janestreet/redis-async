@@ -2,8 +2,7 @@
     sequence of bytes having a known length.
 
     This interface may be implemented to (de)serialize a specific type to and from this
-    representation.
-*)
+    representation. *)
 
 open Core
 open Async

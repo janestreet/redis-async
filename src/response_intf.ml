@@ -1,8 +1,7 @@
 (** A pending response is created upon issuing a Redis command.
 
     Each pending response contains a parser appropriate for that response as well as an
-    [Ivar] that the creating command will wait for.
-*)
+    [Ivar] that the creating command will wait for. *)
 
 open Core
 open Async

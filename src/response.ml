@@ -114,6 +114,19 @@ let create_string_list () =
     | other -> handle_unexpected_response ~expected:"string list" other)
 ;;
 
+let create_int_list () =
+  create (fun buf ->
+    match Resp3.parse_exn buf with
+    | Array array ->
+      let%map.Or_error result =
+        Array.fold_result array ~init:[] ~f:(fun acc -> function
+          | Int int -> Ok (int :: acc)
+          | other -> handle_unexpected_response ~expected:"int list" other)
+      in
+      List.rev result
+    | other -> handle_unexpected_response ~expected:"int list" other)
+;;
+
 let create_host_and_port () =
   create (fun buf ->
     match Resp3.parse_exn buf with
@@ -125,21 +138,35 @@ let create_host_and_port () =
 
 let create_role () = create (fun buf -> Role.of_resp3 (Resp3.parse_exn buf))
 
-let parse_string_map = function
+let parse_string_map ~f = function
   | Resp3.Map pairs ->
     Array.fold_result pairs ~init:String.Map.empty ~f:(fun acc pair ->
       match pair with
-      | Resp3.String key, data -> Map.set acc ~key ~data |> Or_error.return
+      | Resp3.String key, data ->
+        let%map.Or_error data = f data in
+        Map.set acc ~key ~data
       | other, _ -> handle_unexpected_response ~expected:"string key" other)
   | other -> handle_unexpected_response ~expected:"string map" other
 ;;
 
-let create_string_map () = create (fun buf -> parse_string_map (Resp3.parse_exn buf))
+let create_string_map () =
+  create (fun buf -> parse_string_map ~f:Or_error.return (Resp3.parse_exn buf))
+;;
+
+let create_string_string_map () =
+  create (fun buf ->
+    parse_string_map (Resp3.parse_exn buf) ~f:(function
+      | String str -> Or_error.return str
+      | unexpected ->
+        Or_error.error_s [%message [%here] "Expected a string" (unexpected : Resp3.t)]))
+;;
 
 let create_string_map_list () =
   create (fun buf ->
     match Resp3.parse_exn buf with
     | Array maps ->
-      Array.to_list maps |> List.map ~f:parse_string_map |> Or_error.combine_errors
+      Array.to_list maps
+      |> List.map ~f:(parse_string_map ~f:Or_error.return)
+      |> Or_error.combine_errors
     | other -> handle_unexpected_response ~expected:"array" other)
 ;;

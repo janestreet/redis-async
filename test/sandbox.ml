@@ -1,5 +1,5 @@
-open Async
 open Core
+open Async
 open Async_unix
 open Deferred.Or_error.Let_syntax
 
@@ -7,7 +7,15 @@ let redis_server_binary () = Deferred.return "/usr/bin/redis-server"
 
 module Redis_string = Redis.String
 
-let mkdtmp () = Unix.mkdtemp "/dev/shm/redis"
+let mkdtmp type_ =
+  let type_ =
+    match type_ with
+    | `Sentinel -> "sentinel"
+    | `Leader -> "leader"
+    | `Replica -> "replica"
+  in
+  Unix.mkdtemp [%string "/dev/shm/redis.%{type_}"]
+;;
 
 (* Wait for replicas to replicate, and ensure that [num_replicas] matches the returned
    number of acknolwedged replicas. *)
@@ -40,7 +48,7 @@ let create ~args ~connected directory =
     ; redis_server
     ]
     @ args
-    @ [ "--dir"; directory; "--port"; Int.to_string port ]
+    @ [ "--dir"; directory; "--port"; Int.to_string port; "--logfile"; "/dev/null" ]
   in
   let%bind _ = Process.create ~prog:"bwrap" ~args () in
   let where_to_connect =
@@ -63,7 +71,7 @@ let create ~args ~connected directory =
 ;;
 
 let create_with_sock ?(args = []) ?connected type_ =
-  let%bind.Deferred directory = mkdtmp () in
+  let%bind.Deferred directory = mkdtmp type_ in
   let unixsocket = directory ^ "/redis.sock" in
   let where_to_connect = Tcp.Where_to_connect.of_file unixsocket in
   let args = args @ [ "--unixsocket"; unixsocket ] in
@@ -117,7 +125,7 @@ let where_to_connect_leader () =
     match%optional l with
     | None ->
       let where_to_connect = create_with_sock `Leader in
-      Set_once.set_exn l [%here] where_to_connect;
+      Set_once.set_exn l where_to_connect;
       where_to_connect
     | Some where_to_connect -> where_to_connect
   in
@@ -168,10 +176,12 @@ let where_to_connect_replica () =
         [ "--replicaof"
         ; Host_and_port.host leader
         ; Host_and_port.port leader |> Int.to_string
+        ; "--replica-priority"
+        ; "0"
         ]
       in
       let where_to_connect = create_with_sock ~args ~connected `Replica in
-      Set_once.set_exn r [%here] where_to_connect;
+      Set_once.set_exn r where_to_connect;
       where_to_connect
     | Some where_to_connect -> where_to_connect
   in
@@ -189,7 +199,7 @@ let where_to_connect_sentinel () =
   let open Set_once.Optional_syntax in
   match%optional s with
   | None ->
-    let%bind.Deferred directory = mkdtmp () in
+    let%bind.Deferred directory = mkdtmp `Sentinel in
     let%bind.Deferred leader = Tcp.Where_to_connect.remote_address leader in
     let leader = Socket.Address.Inet.to_host_and_port leader in
     let leader_name = "test" in
@@ -217,7 +227,7 @@ let where_to_connect_sentinel () =
     in
     let%bind where_to_connect = create ~connected ~args directory in
     let where_to_connect = leader_name, where_to_connect in
-    Set_once.set_exn s [%here] where_to_connect;
+    Set_once.set_exn s where_to_connect;
     return where_to_connect
   | Some where_to_connect -> return where_to_connect
 ;;

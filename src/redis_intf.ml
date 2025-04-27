@@ -1,8 +1,7 @@
 (** A Redis client that provides a typeful API around commands.
 
     Note that if you prefer a vanilla Redis client you can specify Bulk_io.String for
-    [Key] and [Value].
-*)
+    [Key] and [Value]. *)
 
 open! Core
 open Async
@@ -28,7 +27,7 @@ module type S = sig
     :  ?on_disconnect:(unit -> unit)
     -> ?auth:Auth.t
     -> where_to_connect:[< Socket.Address.t ] Tcp.Where_to_connect.t
-    -> 'a
+    -> ([< `Leader | `Replica | `Sentinel ] as 'a)
     -> 'a t Deferred.Or_error.t
 
   val create
@@ -55,9 +54,9 @@ module type S = sig
 
   (** Create a replica connection given a sentinel connection.
 
-      @param replica_priority_sorter Provides the order in which to attempt replica
-      connections. Defaults to randomization.
-  *)
+      @param replica_priority_sorter
+        Provides the order in which to attempt replica connections. Defaults to
+        randomization. *)
   val sentinel_connect_to_one_replica
     :  [< `Sentinel ] t
     -> ?on_disconnect:(unit -> unit)
@@ -122,12 +121,10 @@ module type S = sig
       The NOLOOP option is used, which means that subscribers will not see invalidation
       messages caused by themselves, unless it is from the flushdb / flushall command.
 
-      Read here for more on usage:
-      https://redis.io/commands/client-tracking
+      Read here for more on usage: https://redis.io/commands/client-tracking
       https://redis.io/topics/client-side-caching
 
-      @param bcast Whether to use BCAST. Off by default.
-  *)
+      @param bcast Whether to use BCAST. Off by default. *)
   val client_tracking
     :  [< `Leader | `Replica ] t
     -> ?bcast:bool
@@ -288,6 +285,14 @@ module type S = sig
   val hlen : [< `Leader | `Replica ] t -> Key.t -> int Deferred.Or_error.t
   val hdel : [< `Leader ] t -> Key.t -> Field.t list -> int Deferred.Or_error.t
 
+  val hexpire
+    :  [< `Leader ] t
+    -> expire_in:Time_ns.Span.t
+    -> ?condition:[ `NX | `XX | `GT | `LT ]
+    -> Key.t
+    -> Field.t list
+    -> [ `Does_not_exist | `Condition_not_met | `Set ] list Deferred.Or_error.t
+
   val hscan
     :  [< `Leader | `Replica ] t
     -> cursor:Cursor.t
@@ -334,11 +339,7 @@ module type S = sig
     -> Value.t list
     -> Resp3.t Deferred.Or_error.t
 
-  val raw_command
-    :  [< `Leader | `Replica | `Sentinel ] t
-    -> string list
-    -> Resp3.t Deferred.Or_error.t
-
+  val raw_command : _ t -> string list -> Resp3.t Deferred.Or_error.t
   val version : [< `Leader | `Replica | `Sentinel ] t -> string Deferred.Or_error.t
   val role : [< `Leader | `Replica | `Sentinel ] t -> Role.t Deferred.Or_error.t
 
@@ -347,8 +348,7 @@ module type S = sig
       Read here for more:
 
       https://redis.io/docs/manual/security/acl/#command-categories
-      https://redis.io/docs/manual/security/acl/#selectors
-  *)
+      https://redis.io/docs/manual/security/acl/#selectors *)
   val acl_setuser
     :  [< `Leader | `Replica | `Sentinel ] t
     -> username:string
@@ -491,4 +491,8 @@ module type S = sig
     -> unit
     -> [ `Ok of Pending_info.Extended.t list | `No_such_stream_or_group ]
          Deferred.Or_error.t
+
+  val config_get : _ t -> string list -> string String.Map.t Deferred.Or_error.t
+  val config_set : _ t -> (string, string) List.Assoc.t -> unit Deferred.Or_error.t
+  val info : _ t -> string list -> string String.Map.t Deferred.Or_error.t
 end

@@ -247,6 +247,18 @@ let%expect_test "Command: ping" =
     return ())
 ;;
 
+let%expect_test "config" =
+  with_sandbox (fun r ->
+    let%bind () = R.config_set r [ "sanitize-dump-payload", "no" ] in
+    let%bind response = R.config_get r [ "sanitize-dump-payload"; "not valid" ] in
+    print_s ([%sexp_of: string String.Map.t] response);
+    [%expect {| ((sanitize-dump-payload no)) |}];
+    let%bind response = R.info r [ "persistence"; "replication" ] in
+    print_endline (Map.find_exn response "loading");
+    [%expect {| 0 |}];
+    return ())
+;;
+
 let%expect_test "set commands" =
   with_sandbox (fun r ->
     let key_1 = "1" in
@@ -376,7 +388,7 @@ let%expect_test "sorted set commands" =
     [%expect {| (String hello) |}];
     let%bind response = R.version r in
     print_endline response;
-    [%expect {| 7.2.4 |}];
+    [%expect {| 7.4.1 |}];
     return ())
 ;;
 
@@ -436,6 +448,13 @@ let%expect_test "hash commands" =
       >>| List.dedup_and_sort ~compare:[%compare: string * string]
     in
     [%test_eq: (string * string) list] response values;
+    (* HEXPIRE *)
+    let%bind response =
+      R.hexpire ~expire_in:(Time_ns.Span.of_sec 1.) r key_1 [ "a"; "b"; "c" ]
+    in
+    [%test_eq: [ `Condition_not_met | `Does_not_exist | `Set ] list]
+      response
+      [ `Set; `Set; `Set ];
     return ())
 ;;
 

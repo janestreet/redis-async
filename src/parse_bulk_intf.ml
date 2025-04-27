@@ -2,8 +2,7 @@
     number of common patterns that are used by many commands.
 
     Provide a set of common parsers for a bulk string type that can be used to handle bulk
-    command responses efficiently.
-*)
+    command responses efficiently. *)
 
 open Core
 

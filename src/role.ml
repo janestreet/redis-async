@@ -8,7 +8,8 @@ module Replica = struct
       | Sync
       | Connected
       | Handshake
-      (** [Handshake] Undocumented. Can happen if the replica is unable to connect to the leader. *)
+      (** [Handshake] Undocumented. Can happen if the replica is unable to connect to the
+          leader. *)
     [@@deriving sexp_of, compare]
 
     let of_string = function

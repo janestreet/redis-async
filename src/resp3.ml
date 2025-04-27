@@ -1,4 +1,5 @@
-(** Development note:
+(** {v
+ Development note:
 
     There are both omissions and errors in the spec. When in doubt, try sniffing the
     protocol live by putting socat in the middle:
@@ -6,7 +7,7 @@
     Start a Redis
     $ socat -v -d -d TCP-LISTEN:6380,bind=127.0.0.1,fork,reuseaddr TCP:localhost:6379 |& cat -A |sed 's/\$$/\\n/'
     $ redis-cli -3 -p 6380
-*)
+    v} *)
 
 open Core
 
