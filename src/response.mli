@@ -61,6 +61,9 @@ val create_string : unit -> (module Response_intf.S with type t = string)
 (** Create a response that expects a string list *)
 val create_string_list : unit -> (module Response_intf.S with type t = string list)
 
+(** Create a response that expects an int list *)
+val create_int_list : unit -> (module Response_intf.S with type t = int list)
+
 (** Create a response that expects a string encoded ip and port *)
 val create_host_and_port : unit -> (module Response_intf.S with type t = Host_and_port.t)
 
@@ -71,6 +74,10 @@ val create_role : unit -> (module Response_intf.S with type t = Role.t)
 val create_string_map
   :  unit
   -> (module Response_intf.S with type t = Resp3.t String.Map.t)
+
+val create_string_string_map
+  :  unit
+  -> (module Response_intf.S with type t = string String.Map.t)
 
 (** Create a response that expects an array of string maps *)
 val create_string_map_list

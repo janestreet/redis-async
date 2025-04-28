@@ -1,6 +1,4 @@
-(** The return value for the XPENDING command
-    https://redis.io/commands/xpending/
-*)
+(** The return value for the XPENDING command https://redis.io/commands/xpending/ *)
 
 open! Core
 

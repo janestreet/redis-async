@@ -4,8 +4,7 @@ open! Core
     a partial implementation and more fields can be added as-needed.
 
     Non-inclusive field names here match the stable underlying protocol. It may be
-    possible to update this someday: https://github.com/valkey-io/valkey/issues/751
-*)
+    possible to update this someday: https://github.com/valkey-io/valkey/issues/751 *)
 module Replica : sig
   type t =
     { name : string

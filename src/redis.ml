@@ -371,6 +371,34 @@ struct
       (Response.create_int ())
   ;;
 
+  let hexpire t ~expire_in ?condition k fs =
+    let condition =
+      match condition with
+      | Some `NX -> [ "NX" ]
+      | Some `XX -> [ "XX" ]
+      | Some `GT -> [ "GT" ]
+      | Some `LT -> [ "LT" ]
+      | None -> []
+    in
+    let expiry_seconds =
+      match Time_ns.Span.to_sec expire_in |> int_of_float with
+      | n when n > 0 -> string_of_int n
+      | n -> raise_s [%message [%here] "Negative expiry" (n : int)]
+    in
+    command_key_string_args_fields
+      t
+      [ "HEXPIRE" ]
+      k
+      ([ expiry_seconds ] @ condition @ [ "FIELDS"; List.length fs |> string_of_int ])
+      fs
+      (Response.create_int_list ())
+    >>| List.map ~f:(function
+      | -2 -> `Does_not_exist
+      | 0 -> `Condition_not_met
+      | 1 -> `Set
+      | n -> raise_s [%message [%here] "Unexpected response" (n : int)])
+  ;;
+
   let hscan t ~cursor ?count ?pattern k =
     let count =
       match count with
@@ -870,6 +898,26 @@ struct
         (Response.create_string_map ())
     in
     Sentinel.Leader.of_string_map result |> Deferred.return
+  ;;
+
+  let config_get t params =
+    command_string t ("CONFIG" :: "GET" :: params) (Response.create_string_string_map ())
+  ;;
+
+  let config_set t params =
+    let params = List.concat_map params ~f:(fun (k, v) -> [ k; v ]) in
+    command_string t ("CONFIG" :: "SET" :: params) (Response.create_ok ())
+  ;;
+
+  let info t sections =
+    let%map blob = command_string t ("INFO" :: sections) (Response.create_string ()) in
+    let lines = String.split_lines blob in
+    List.fold lines ~init:String.Map.empty ~f:(fun accum line ->
+      if String.is_empty line || String.is_prefix line ~prefix:"#"
+      then accum
+      else (
+        let key, data = String.lsplit2_exn line ~on:':' in
+        Map.add_exn accum ~key ~data))
   ;;
 end
 

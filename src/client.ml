@@ -18,8 +18,7 @@ type subscriber =
     fanned out.
 
     If the list of subscribers for a channel is empty, that means we issued an unsubscribe
-    command to redis.
-*)
+    command to redis. *)
 type subscription_table = subscriber list String.Table.t
 
 type ('a, 'key, 'field, 'value) t =
@@ -108,6 +107,31 @@ struct
         List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
         List.iter key_args ~f:(fun arg -> write_array_el writer (module Key) arg);
         List.iter args ~f:(fun arg -> write_array_el writer (module Arg) arg);
+        Ivar.read R.this)
+  ;;
+
+  let command_key_string_args_fields
+    (type r)
+    t
+    ?result_of_empty_input
+    cmds
+    key_arg
+    args
+    field_args
+    (module R : Response_intf.S with type t = r)
+    =
+    match result_of_empty_input with
+    | Some result when List.is_empty args || List.is_empty field_args -> return result
+    | _ ->
+      with_writer t (fun writer ->
+        Queue.enqueue t.pending_response (module R);
+        write_array_header
+          writer
+          (List.length cmds + 1 + List.length args + List.length field_args);
+        List.iter cmds ~f:(fun cmd -> write_array_el writer (module Bulk_io.String) cmd);
+        write_array_el writer (module Key) key_arg;
+        List.iter args ~f:(fun arg -> write_array_el writer (module Bulk_io.String) arg);
+        List.iter field_args ~f:(fun field -> write_array_el writer (module Field) field);
         Ivar.read R.this)
   ;;
 
@@ -493,11 +517,12 @@ struct
   ;;
 
   let create ?on_disconnect ?auth ~where_to_connect (_ : 'a) =
-    let%bind.Deferred.Or_error _socket, reader, writer =
+    let%bind.Deferred.Or_error socket, reader, writer =
       (* Tcp.connect will raise if the connection attempt times out, but we'd prefer to
          return an Error. *)
       Monitor.try_with_or_error (fun () -> Tcp.connect where_to_connect)
     in
+    Socket.setopt socket Socket.Opt.keepalive true;
     let pending_response = Queue.create () in
     let t =
       { pending_response

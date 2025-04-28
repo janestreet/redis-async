@@ -2,10 +2,8 @@
 
     <millisecondsTime>-<sequenceNumber>
 
-    See:
-    https://redis.io/docs/data-types/streams-tutorial/
-    https://redis.io/docs/latest/develop/data-types/streams/#entry-ids
-*)
+    See: https://redis.io/docs/data-types/streams-tutorial/
+    https://redis.io/docs/latest/develop/data-types/streams/#entry-ids *)
 
 open! Core
 include Identifiable.S_plain
