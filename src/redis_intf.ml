@@ -388,6 +388,7 @@ module type S = sig
     :  [< `Leader ] t
     -> Key.t
     -> ?stream_id:Stream_id.t
+    -> ?maxlen:[< `Approximate of int | `Exact of int ]
     -> (Field.t * Value.t) list
     -> Stream_id.t Deferred.Or_error.t
 

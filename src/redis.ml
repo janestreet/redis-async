@@ -429,6 +429,7 @@ struct
     | `expired -> 'x'
     | `set -> '$'
     | `hset -> 'h'
+    | `incrby -> 'g'
   ;;
 
   let keyspace_setup t category events =
@@ -650,14 +651,20 @@ struct
 
   let xlen t key = command_key t [ "XLEN" ] [ key ] (Response.create_int ())
 
-  let xadd t key ?stream_id fvlist =
+  let xadd t key ?stream_id ?maxlen fvlist =
     let stream_id = Option.value_map stream_id ~default:"*" ~f:Stream_id.to_string in
+    let args =
+      match maxlen with
+      | None -> [ stream_id ]
+      | Some (`Exact threshold) -> [ "MAXLEN"; "="; itoa threshold; stream_id ]
+      | Some (`Approximate threshold) -> [ "MAXLEN"; "~"; itoa threshold; stream_id ]
+    in
     let%map response =
       command_keys_fields_and_values
         t
         [ "XADD" ]
         [ key ]
-        [ stream_id ]
+        args
         fvlist
         (Response.create_string ())
     in

@@ -1,9 +1,9 @@
 (** Key events that you may ask Redis to inform you of
-    https://redis.io/docs/manual/keyspace-notifications/
+    https://redis.io/docs/latest/develop/pubsub/keyspace-notifications/
 
     This variant is incomplete and is intended to be added to as needed. *)
 
-open Core
+open! Core
 
 type t =
   [ `del (** DEL generates a del event for every deleted key. *)
@@ -19,7 +19,6 @@ type t =
   | `set
     (** Every time set, setex, setnx, or getset is called, a set event is generated. *)
   | `hset (** Every time hset, hsetnx, or hmset is called, an hset event is generated. *)
+  | `incrby (** incr, decr, incrby, decrby *)
   ]
-[@@deriving sexp_of, enumerate]
-
-include Stringable.S with type t := t
+[@@deriving sexp_of, enumerate, string]

@@ -6,11 +6,9 @@ module R = Redis.String
 
 let with_sandbox f =
   let%bind () = Sandbox.run (module R) f in
-  Sandbox.run_sentinel
-    (module R)
-    (fun s ~leader_name ->
-      let%bind r = R.sentinel_connect_to_leader s ~leader_name () in
-      Monitor.protect ~finally:(fun () -> R.close r) (fun () -> f r))
+  Sandbox.run_sentinel (module R) (fun s ~leader_name ->
+    let%bind r = R.sentinel_connect_to_leader s ~leader_name () in
+    Monitor.protect ~finally:(fun () -> R.close r) (fun () -> f r))
 ;;
 
 let print_error = function
@@ -50,13 +48,11 @@ let%expect_test "Roles" =
 
 let%expect_test "Sentinel" =
   let%bind () =
-    Sandbox.run_sentinel
-      (module R)
-      (fun r ~leader_name ->
-        let%bind r = R.sentinel_connect_to_leader r ~leader_name () in
-        let%bind () = print_role r in
-        let%bind.Deferred () = R.close r in
-        return ())
+    Sandbox.run_sentinel (module R) (fun r ~leader_name ->
+      let%bind r = R.sentinel_connect_to_leader r ~leader_name () in
+      let%bind () = print_role r in
+      let%bind.Deferred () = R.close r in
+      return ())
   in
   [%expect
     {|
@@ -66,13 +62,11 @@ let%expect_test "Sentinel" =
        (((where_to_connect (127.0.0.1 PORT)) (replication_offset <opaque>))))))
     |}];
   let%bind () =
-    Sandbox.run_sentinel
-      (module R)
-      (fun r ~leader_name ->
-        let%bind r = R.sentinel_connect_to_one_replica r ~leader_name () in
-        let%bind () = print_role r in
-        let%bind.Deferred () = R.close r in
-        return ())
+    Sandbox.run_sentinel (module R) (fun r ~leader_name ->
+      let%bind r = R.sentinel_connect_to_one_replica r ~leader_name () in
+      let%bind () = print_role r in
+      let%bind.Deferred () = R.close r in
+      return ())
   in
   [%expect
     {|
@@ -1048,6 +1042,18 @@ let%expect_test "Streams" =
     [%expect {| No_such_key |}];
     let%bind () = print_consumer_info "stream" (Redis.Group.of_string "invalid") in
     [%expect {| No_such_group |}];
+    let%bind _ = R.xadd r "trim_stream" [ "message", "trim me" ] in
+    let%bind _ = R.xadd r "trim_stream" [ "message", "trim me" ] in
+    let%bind _ = R.xadd r "trim_stream" [ "message", "foo" ] in
+    let%bind _ = R.xadd r "trim_stream" [ "message", "bar" ] in
+    let%bind _ = R.xadd r "trim_stream" ~maxlen:(`Exact 3) [ "message", "fizz" ] in
+    let%bind response = R.xrange r "trim_stream" () in
+    print_s ([%sexp_of: (Test_stream_id.t * (string * string) list) list] response);
+    [%expect
+      {|
+      (("<stream id>" ((message foo))) ("<stream id>" ((message bar)))
+       ("<stream id>" ((message fizz))))
+      |}];
     return ())
 ;;
 

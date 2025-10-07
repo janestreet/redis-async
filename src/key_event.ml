@@ -1,30 +1,12 @@
-open Core
+open! Core
 
 type t =
   [ `del
   | `expire
-  | `new_
+  | `new_ [@rename "new"]
   | `expired
   | `set
   | `hset
+  | `incrby
   ]
-[@@deriving sexp_of, enumerate]
-
-let to_string = function
-  | `del -> "del"
-  | `expire -> "expire"
-  | `expired -> "expired"
-  | `new_ -> "new"
-  | `set -> "set"
-  | `hset -> "hset"
-;;
-
-let of_string = function
-  | "del" -> `del
-  | "expire" -> `expire
-  | "new" -> `new_
-  | "expired" -> `expired
-  | "set" -> `set
-  | "hset" -> `hset
-  | str -> raise_s [%message [%here] "Unexpected" (str : string)]
-;;
+[@@deriving sexp_of, enumerate, string ~capitalize:"snake_case"]
