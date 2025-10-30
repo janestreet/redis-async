@@ -9,12 +9,13 @@ let disconnect_message = "Disconnected from Redis: see server logs for detail"
 type subscriber =
   | Subscriber :
       { writer : 'a Pipe.Writer.t
-      ; consume : (read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a
+      ; consume : (read, Iobuf.seek, Iobuf.global) Iobuf.t -> subscription:string -> 'a
       }
       -> subscriber
 
 (** This is a table from pub/sub channel to a list of subscribers. Each channel can have
     multiple subscribers, but that is represented by a single redis subscription that is
+
     fanned out.
 
     If the list of subscribers for a channel is empty, that means we issued an unsubscribe
@@ -25,7 +26,8 @@ type ('a, 'key, 'field, 'value) t =
   { pending_response : (module Response_intf.S) Queue.t
   ; reader : Reader.t
   ; writer : Writer.t
-  ; mutable invalidations : [ `All | `Key of 'key ] Pipe.Writer.t list
+  ; mutable invalidations :
+      (([ `All | `Key of 'key ] -> unit) Bus.Read_write.t * bool) option
   ; subscriptions : subscription_table
   ; pattern_subscriptions : subscription_table
   }
@@ -353,25 +355,9 @@ struct
 
   (** Handle invalidation PUSH messages *)
   let invalidation t data =
-    let was_changed, invalidations =
-      List.fold
-        t.invalidations
-        ~init:(false, [])
-        ~f:(fun (was_changed, invalidations) invalidation ->
-          if Pipe.is_closed invalidation
-          then true, invalidations
-          else (
-            Pipe.write_without_pushback invalidation data;
-            was_changed, invalidation :: invalidations))
-    in
-    if was_changed
-    then (
-      t.invalidations <- invalidations;
-      if List.is_empty invalidations
-      then
-        don't_wait_for
-          (Deferred.ignore_m
-             (command_string t [ "CLIENT"; "TRACKING"; "OFF" ] (Response.create_ok ()))))
+    match t.invalidations with
+    | None -> ()
+    | Some (bus, _) -> Bus.write bus data
   ;;
 
   let handle_message subscriptions buf =
@@ -388,7 +374,9 @@ struct
       let lo = Iobuf.Expert.lo buf in
       List.iteri writers ~f:(fun i (Subscriber { writer; consume }) ->
         if i <> 0 then Iobuf.Expert.set_lo buf lo;
-        let payload = consume (buf :> (read, Iobuf.seek) Iobuf.t) ~subscription in
+        let payload =
+          consume (buf :> (read, Iobuf.seek, Iobuf.global) Iobuf.t) ~subscription
+        in
         Pipe.write_without_pushback_if_open writer payload)
   ;;
 
@@ -469,7 +457,8 @@ struct
                   [%message
                     [%here]
                       "Received a response when none was expected"
-                      (buf : (read_write, Iobuf.seek) Iobuf.Window.Hexdump.t)]
+                      (buf
+                       : (read_write, Iobuf.seek, Iobuf.global) Iobuf.Window.Hexdump.t)]
               else (
                 let response = Queue.peek_exn t.pending_response in
                 let module R = (val response : Response_intf.S) in
@@ -493,8 +482,7 @@ struct
   let close t =
     let%bind () = Writer.close t.writer in
     let%map () = Reader.close t.reader in
-    List.iter t.invalidations ~f:Pipe.close;
-    t.invalidations <- [];
+    Option.iter t.invalidations ~f:(fun (bus, _) -> Bus.close bus);
     List.iter
       (Hashtbl.data t.subscriptions @ Hashtbl.data t.pattern_subscriptions)
       ~f:(fun subscribers ->
@@ -528,7 +516,7 @@ struct
       { pending_response
       ; reader
       ; writer
-      ; invalidations = []
+      ; invalidations = None
       ; subscriptions = String.Table.create ()
       ; pattern_subscriptions = String.Table.create ()
       }
@@ -660,21 +648,41 @@ struct
             (leader_addr : Tcp.Where_to_connect.inet)]
   ;;
 
-  let client_tracking t ?(bcast = false) () =
-    let commands =
-      match bcast with
-      | false -> [ "CLIENT"; "TRACKING"; "ON"; "NOLOOP" ]
-      | true -> [ "CLIENT"; "TRACKING"; "ON"; "NOLOOP"; "BCAST" ]
-    in
-    let reader, writer = Pipe.create () in
-    let was_empty = List.is_empty t.invalidations in
-    t.invalidations <- writer :: t.invalidations;
-    let%map.Deferred.Or_error () =
-      if was_empty
-      then command_string t commands (Response.create_ok ())
-      else Deferred.Or_error.return ()
-    in
-    reader
+  let start_client_tracking t ?(bcast = false) () =
+    match t.invalidations with
+    | Some (bus, current_bcast) ->
+      if Bool.equal current_bcast bcast
+      then Bus.read_only bus |> Deferred.Or_error.return
+      else
+        Deferred.Or_error.error_s
+          [%message
+            "start_client_tracking called with a different bcast. Call \
+             stop_client_tracking first to change bcast."
+              (bcast : bool)]
+    | None ->
+      let bus =
+        Bus.create_exn
+          Arity1
+          ~on_subscription_after_first_write:Allow
+          ~on_callback_raise:Error.raise
+      in
+      t.invalidations <- Some (bus, bcast);
+      let commands =
+        match bcast with
+        | false -> [ "CLIENT"; "TRACKING"; "ON"; "NOLOOP" ]
+        | true -> [ "CLIENT"; "TRACKING"; "ON"; "NOLOOP"; "BCAST" ]
+      in
+      let%map.Deferred.Or_error () = command_string t commands (Response.create_ok ()) in
+      Bus.read_only bus
+  ;;
+
+  let stop_client_tracking t () =
+    match t.invalidations with
+    | Some (bus, _) ->
+      Bus.close bus;
+      t.invalidations <- None;
+      command_string t [ "CLIENT"; "TRACKING"; "OFF" ] (Response.create_ok ())
+    | None -> Deferred.Or_error.ok_unit
   ;;
 
   let add_subscriber

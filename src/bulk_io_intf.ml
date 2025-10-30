@@ -12,7 +12,7 @@ module type S = sig
 
   module Redis_bulk_io : sig
     val length : t -> int
-    val consume : len:int -> ([> read ], Iobuf.seek) Iobuf.t -> t Or_error.t
+    val consume : len:int -> ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> t Or_error.t
     val write : len:int -> Writer.t -> t -> unit
 
     include Stringable.S with type t := t

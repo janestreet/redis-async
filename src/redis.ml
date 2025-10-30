@@ -92,16 +92,31 @@ struct
       (Response.create Key_parser.cursor_and_list)
   ;;
 
-  let set t k ?expire v =
+  let set' ?expire ?only_if t k v response =
     let args =
-      match expire with
-      | None -> []
-      | Some expire -> [ "PX"; Int.to_string (Time_ns.Span.to_int_ms expire) ]
+      let args =
+        match expire with
+        | None -> []
+        | Some expire -> [ "PX"; Int.to_string (Time_ns.Span.to_int_ms expire) ]
+      in
+      match only_if with
+      | None -> args
+      | Some `Key_does_not_exist -> "NX" :: args
+      | Some `Key_already_exists -> "XX" :: args
     in
-    command_kv t [ "SET" ] [ k, v ] args (Response.create_ok ())
+    command_kv t [ "SET" ] [ k, v ] args response
   ;;
 
-  let setnx t k v = command_kv t [ "SETNX" ] [ k, v ] [] (Response.create_01_bool ())
+  let set ?expire t k v = set' ?expire t k v (Response.create_ok ())
+
+  let set_if ?expire t only_if k v =
+    match%bind set' ?expire ~only_if t k v (Response.create_resp3 ()) with
+    | String "OK" -> return `Set
+    | Null -> return `Not_set
+    | unexpected ->
+      Deferred.return
+        (Response.handle_unexpected_response ~expected:"OK or Null" unexpected)
+  ;;
 
   let pexpire t key ?(nx = false) span =
     let nx = if nx then [ "NX" ] else [] in

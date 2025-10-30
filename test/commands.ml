@@ -121,11 +121,12 @@ let%expect_test ("Strings" [@tags "64-bits-only"]) =
     let%bind response = R.mget r [ "hello"; "a"; "c"; "e" ] in
     print_s ([%sexp_of: string option list] response);
     [%expect {| (() (b) () (f)) |}];
-    let%bind response = R.setnx r "color" "blue" in
-    print_s ([%sexp_of: bool] response);
-    [%expect {| true |}];
-    let%bind response = R.setnx r "color" "green" in
-    [%test_eq: bool] response false;
+    let%bind response = R.set_if r `Key_does_not_exist "color" "blue" in
+    print_s ([%sexp_of: [ `Set | `Not_set ]] response);
+    [%expect {| Set |}];
+    let%bind response = R.set_if r `Key_does_not_exist "color" "green" in
+    print_s ([%sexp_of: [ `Set | `Not_set ]] response);
+    [%expect {| Not_set |}];
     let%bind response = R.get r "color" in
     print_s ([%sexp_of: string option] response);
     [%expect {| (blue) |}];
@@ -547,24 +548,27 @@ let%expect_test "Invalidation" =
   let%bind where_to_connect, _ = Sandbox.where_to_connect () in
   let%bind reader = R.create ~where_to_connect () in
   let%bind writer = R.create ~where_to_connect () in
-  let%bind invalidation = R.client_tracking reader () in
+  let invalidations = Queue.create () in
+  let%bind bus = R.start_client_tracking reader () in
+  let subscriber = Bus.subscribe_exn bus ~f:(Queue.enqueue invalidations) in
   let expect_invalidation () =
-    let%map.Deferred result = Pipe.read invalidation in
-    Ok (print_s ([%sexp_of: [ `Ok of [ `All | `Key of string ] | `Eof ]] result))
+    let result = Queue.dequeue_exn invalidations in
+    print_s ([%sexp_of: [ `All | `Key of string ]] result)
   in
   let%bind response = R.get reader "hello" in
   print_s ([%sexp_of: string option] response);
   [%expect {| () |}];
   let%bind () = R.set writer "hello" "world" in
-  let%bind () = expect_invalidation () in
-  [%expect {| (Ok (Key hello)) |}];
+  expect_invalidation ();
+  [%expect {| (Key hello) |}];
   let%bind () = R.flushall writer in
-  let%bind () = expect_invalidation () in
-  [%expect {| (Ok All) |}];
+  expect_invalidation ();
+  [%expect {| All |}];
   let%bind () = R.flushdb reader in
-  let%bind () = expect_invalidation () in
-  [%expect {| (Ok All) |}];
-  Pipe.close_read invalidation;
+  expect_invalidation ();
+  [%expect {| All |}];
+  Bus.unsubscribe bus subscriber;
+  let%bind () = R.stop_client_tracking reader () in
   return ()
 ;;
 
@@ -572,19 +576,22 @@ let%expect_test "Broadcast invalidation" =
   let%bind where_to_connect, _ = Sandbox.where_to_connect () in
   let%bind reader = R.create ~where_to_connect () in
   let%bind writer = R.create ~where_to_connect () in
-  let%bind invalidation = R.client_tracking ~bcast:true reader () in
+  let invalidations = Queue.create () in
+  let%bind bus = R.start_client_tracking reader ~bcast:true () in
+  let subscriber = Bus.subscribe_exn bus ~f:(Queue.enqueue invalidations) in
   let expect_invalidation () =
-    let%map.Deferred result = Pipe.read invalidation in
-    Ok (print_s ([%sexp_of: [ `Ok of [ `All | `Key of string ] | `Eof ]] result))
+    let result = Queue.dequeue_exn invalidations in
+    print_s ([%sexp_of: [ `All | `Key of string ]] result)
   in
   let%bind () = R.set writer "hello" "world" in
   (* Reader receives bcast invalidation without first requesting any keys *)
-  let%bind () = expect_invalidation () in
-  [%expect {| (Ok (Key hello)) |}];
+  expect_invalidation ();
+  [%expect {| (Key hello) |}];
   let%bind () = R.flushall writer in
-  let%bind () = expect_invalidation () in
-  [%expect {| (Ok All) |}];
-  Pipe.close_read invalidation;
+  expect_invalidation ();
+  [%expect {| All |}];
+  Bus.unsubscribe bus subscriber;
+  let%bind () = R.stop_client_tracking reader () in
   return ()
 ;;
 
