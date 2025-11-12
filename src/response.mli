@@ -18,7 +18,7 @@ val handle_unexpected_response : expected:string -> Resp3.t -> _ Or_error.t
 
 (** Create a response that runs the supplied parsing function *)
 val create
-  :  ((read, Iobuf.seek) Iobuf.t -> 'a Or_error.t)
+  :  ((read, Iobuf.seek, Iobuf.global) Iobuf.t -> 'a Or_error.t)
   -> (module Response_intf.S with type t = 'a)
 
 (** Create a response that expects 'OK' *)

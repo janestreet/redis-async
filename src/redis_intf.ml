@@ -115,8 +115,11 @@ module type S = sig
     -> unit
     -> (Cursor.t * Key.t list) Deferred.Or_error.t
 
-  (** Turn on Redis client tracking and provide a pipe of invalidation messages received
-      from the server. Closing the pipe turns tracking off.
+  (** Turn on Redis client tracking and provide a bus for invalidation messages received
+      from the server.
+
+      To change broadcast mode, call [stop_client_tracking] and then call
+      [start_client_tracking] again.
 
       The NOLOOP option is used, which means that subscribers will not see invalidation
       messages caused by themselves, unless it is from the flushdb / flushall command.
@@ -124,21 +127,31 @@ module type S = sig
       Read here for more on usage: https://redis.io/commands/client-tracking
       https://redis.io/topics/client-side-caching
 
-      @param bcast Whether to use BCAST. Off by default. *)
-  val client_tracking
+      @param bcast Whether to use broadcast mode. Off by default. *)
+  val start_client_tracking
     :  [< `Leader | `Replica ] t
     -> ?bcast:bool
     -> unit
-    -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
+    -> ([ `All | `Key of Key.t ] -> unit) Bus.Read_only.t Deferred.Or_error.t
+
+  (** Turn off Redis client tracking. This does nothing if client tracking is already off. *)
+  val stop_client_tracking : [< `Leader | `Replica ] t -> unit -> unit Deferred.Or_error.t
 
   val set
-    :  [< `Leader ] t
+    :  ?expire:Time_ns.Span.t
+    -> [< `Leader ] t
     -> Key.t
-    -> ?expire:Time_ns.Span.t
     -> Value.t
     -> unit Deferred.Or_error.t
 
-  val setnx : [< `Leader ] t -> Key.t -> Value.t -> bool Deferred.Or_error.t
+  val set_if
+    :  ?expire:Time_ns.Span.t
+    -> [< `Leader ] t
+    -> [ `Key_does_not_exist | `Key_already_exists ]
+    -> Key.t
+    -> Value.t
+    -> [ `Set | `Not_set ] Deferred.Or_error.t
+
   val mset : [< `Leader ] t -> (Key.t * Value.t) list -> unit Deferred.Or_error.t
   val msetnx : [< `Leader ] t -> (Key.t * Value.t) list -> bool Deferred.Or_error.t
   val get : [< `Leader | `Replica ] t -> Key.t -> Value.t option Deferred.Or_error.t
@@ -322,7 +335,7 @@ module type S = sig
   val subscribe_raw
     :  [< `Leader | `Replica ] t
     -> [ `Literal of string list | `Pattern of string list ]
-    -> consume:((read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a)
+    -> consume:((read, Iobuf.seek, Iobuf.global) Iobuf.t -> subscription:string -> 'a)
     -> 'a Pipe.Reader.t Deferred.Or_error.t
 
   val psubscribe

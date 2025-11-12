@@ -195,18 +195,27 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
     -> (module Response_intf.S with type t = 'r)
     -> 'r Deferred.Or_error.t
 
-  (** Turn on Redis client tracking and provide a pipe of invalidation messages received
-      from the server. Closing the pipe turns tracking off.
+  (** Turn on Redis client tracking and provide a bus for invalidation messages received
+      from the server.
+
+      To change broadcast mode, call [stop_client_tracking] and then call
+      [start_client_tracking] again.
+
+      The NOLOOP option is used, which means that subscribers will not see invalidation
+      messages caused by themselves, unless it is from the flushdb / flushall command.
 
       Read here for more on usage: https://redis.io/commands/client-tracking
       https://redis.io/topics/client-side-caching
 
       @param bcast Whether to use broadcast mode. Off by default. *)
-  val client_tracking
+  val start_client_tracking
     :  [< `Leader | `Replica ] t
     -> ?bcast:bool
     -> unit
-    -> [ `All | `Key of Key.t ] Pipe.Reader.t Deferred.Or_error.t
+    -> ([ `All | `Key of Key.t ] -> unit) Bus.Read_only.t Deferred.Or_error.t
+
+  (** Turn off Redis client tracking. This does nothing if client tracking is already off. *)
+  val stop_client_tracking : [< `Leader | `Replica ] t -> unit -> unit Deferred.Or_error.t
 
   (** Returns a pipe reader for a subscription. Multiple subscriptions to the same channel
       share the same redis subscription. If all readers subscribed to a channel close
@@ -214,6 +223,6 @@ module Make (Key : Bulk_io_intf.S) (Field : Bulk_io_intf.S) (Value : Bulk_io_int
   val subscribe_raw
     :  [< `Leader | `Replica ] t
     -> [ `Literal of string list | `Pattern of string list ]
-    -> consume:((read, Iobuf.seek) Iobuf.t -> subscription:string -> 'a)
+    -> consume:((read, Iobuf.seek, Iobuf.global) Iobuf.t -> subscription:string -> 'a)
     -> 'a Pipe.Reader.t Deferred.Or_error.t
 end

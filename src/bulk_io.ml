@@ -3,7 +3,12 @@ open Async
 
 module type S = Bulk_io_intf.S
 
-module Make_binable (T : Binable.S) = struct
+module Make_binable (T : sig
+    type t
+
+    include Binable.S with type t := t
+  end) =
+struct
   module Redis_bulk_io = struct
     let length = T.bin_size_t
 

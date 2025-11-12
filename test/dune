@@ -1,7 +1,7 @@
 (library
  (name redis_test)
- (libraries async build_data expect_test_helpers_core redis_helpers redis
-   async_unix available_ephemeral_port core core_kernel.iobuf
-   core_kernel.weak_pointer)
+ (libraries async async_unix available_ephemeral_port build_data
+   core_kernel.bus core expect_test_helpers_core core_kernel.iobuf redis
+   redis_helpers core_kernel.weak_pointer)
  (preprocess
   (pps ppx_jane)))

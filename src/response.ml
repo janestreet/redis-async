@@ -1,7 +1,7 @@
 open Core
 open Async
 
-let create (type a) (parse : (read, Iobuf.seek) Iobuf.t -> a Or_error.t) =
+let create (type a) (parse : (read, Iobuf.seek, Iobuf.global) Iobuf.t -> a Or_error.t) =
   (module struct
     type t = a
 

@@ -18,13 +18,13 @@ type t =
   | Set of t array
 [@@deriving compare, equal, sexp_of]
 
-val simple_string : ([> read ], Iobuf.seek) Iobuf.t -> string
-val blob_string : ([> read ], Iobuf.seek) Iobuf.t -> string
-val extract_error : ([> read ], Iobuf.seek) Iobuf.t -> Error.t
-val parse_exn : ([> read ], Iobuf.seek) Iobuf.t -> t
-val expect_crlf : ([> read ], Iobuf.seek) Iobuf.t -> unit
-val expect_char : ([> read ], Iobuf.seek) Iobuf.t -> char -> unit
-val consume_char : ([> read ], Iobuf.seek) Iobuf.t -> char
-val peek_char : ([> read ], Iobuf.seek) Iobuf.t -> char
-val ends_in_crlf : ([> read ], Iobuf.seek) Iobuf.t -> bool
-val number : ([> read ], Iobuf.seek) Iobuf.t -> int
+val simple_string : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> string
+val blob_string : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> string
+val extract_error : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> Error.t
+val parse_exn : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> t
+val expect_crlf : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> unit
+val expect_char : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> char -> unit
+val consume_char : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> char
+val peek_char : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> char
+val ends_in_crlf : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> bool
+val number : ([> read ], Iobuf.seek, Iobuf.global) Iobuf.t -> int
