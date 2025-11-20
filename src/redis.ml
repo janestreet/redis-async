@@ -157,8 +157,8 @@ struct
 
   let msetnx t kvs =
     (* This atomically sets all the keys/values as long as none of the keys already exist.
-       For an empty set of key-values, we always succeed (vacuous truth), so the result
-       of empty input should be true. *)
+       For an empty set of key-values, we always succeed (vacuous truth), so the result of
+       empty input should be true. *)
     command_kv
       t
       ~result_of_empty_input:(Ok true)
@@ -463,7 +463,8 @@ struct
         raise_s [%message [%here] "Unexpected response to config get" (resp3 : Resp3.t)]
     in
     let configuration =
-      (* Redis sets flags based on this string and does not care about duplicate characters *)
+      (* Redis sets flags based on this string and does not care about duplicate
+         characters *)
       String.of_char_list
         (category :: List.map (events :> Key_event.t list) ~f:keyevent_configuration)
       ^ existing_configuration
@@ -474,8 +475,7 @@ struct
         [ "CONFIG"; "SET"; "notify-keyspace-events"; configuration ]
         (Response.create_ok ())
     in
-    (* Transform the string events we may receive back into their variant
-       representation. *)
+    (* Transform the string events we may receive back into their variant representation. *)
     String.Map.of_alist_exn
       (List.map events ~f:(fun event -> Key_event.to_string (event :> Key_event.t), event))
   ;;

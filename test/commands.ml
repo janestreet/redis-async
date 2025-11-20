@@ -724,9 +724,8 @@ let%expect_test "an unsubscribe and a resubscribe should maintain the subscripti
     print_s [%sexp (subscriptions : String.Set.t)];
     [%expect {| (__sentinel__:hello foo) |}];
     Pipe.close_read subscription;
-    (* We do a plain yield here in case there's a race condition around
-       the unsubscription getting initiated but not finished before
-       the second subscription occurs.
+    (* We do a plain yield here in case there's a race condition around the unsubscription
+       getting initiated but not finished before the second subscription occurs.
     *)
     let%bind.Deferred () = Scheduler.yield () in
     let%bind _s = R.subscribe r [ "foo" ] in
