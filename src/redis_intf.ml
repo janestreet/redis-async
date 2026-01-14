@@ -432,6 +432,13 @@ module type S = sig
     -> unit
     -> (Stream_id.t * (Field.t * Value.t) list) list Deferred.Or_error.t
 
+  val xread
+    :  [< `Leader | `Replica ] t
+    -> ?count:int
+    -> ?block:[ `Don't_block | `Forever | `For_up_to of Time_ns.Span.t ]
+    -> (Key.t * Stream_id.t) list
+    -> (Key.t * (Stream_id.t * (Field.t * Value.t) list) list) list Deferred.Or_error.t
+
   val xreadgroup
     :  [< `Leader | `Replica ] t
     -> Group.t

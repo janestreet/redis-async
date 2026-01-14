@@ -391,10 +391,12 @@ struct
          - When using BCAST the invalidation array can be larger than size 1, which is not
            documented in the protocol.
          - The invalidation messages are decoupled from the atomicity guarantees inside
-           Redis, {{: https://github.com/redis/redis/issues/7563 } which arguably should not
-           be the case}. For example: If I invalidate 3 keys using MSET the client should
-           ideally receive 1 invalidation message with 3 keys, but instead receives 3
-           invalidation message each with one key. *)
+           Redis,
+           {{:https://github.com/redis/redis/issues/7563} which arguably should not be the
+             case}.
+           For example: If I invalidate 3 keys using MSET the client should ideally
+           receive 1 invalidation message with 3 keys, but instead receives 3 invalidation
+           message each with one key. *)
       (match Resp3.peek_char buf with
        | '*' ->
          let keys = Key_parser.list buf |> Or_error.ok_exn in
@@ -663,9 +665,9 @@ struct
     | None ->
       let bus =
         Bus.create_exn
-          Arity1
           ~on_subscription_after_first_write:Allow
           ~on_callback_raise:Error.raise
+          ()
       in
       t.invalidations <- Some (bus, bcast);
       let commands =

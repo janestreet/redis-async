@@ -445,6 +445,7 @@ struct
     | `set -> '$'
     | `hset -> 'h'
     | `incrby -> 'g'
+    | `xadd -> 't'
   ;;
 
   let keyspace_setup t category events =
@@ -739,7 +740,7 @@ struct
       (Response.create parse_stream_response)
   ;;
 
-  let xreadgroup t group consumer ?count ?(block = `Don't_block) streams =
+  let read_command t ?count ?(block = `Don't_block) ~cmds streams =
     let count =
       Option.value_map count ~default:[] ~f:(fun count ->
         [ "COUNT"; Int.to_string count ])
@@ -752,14 +753,28 @@ struct
     in
     command_keys_string_args
       t
-      ([ "XREADGROUP"; "GROUP"; Group.to_string group; Consumer.to_string consumer ]
-       @ count
-       @ block
-       @ [ "STREAMS" ])
+      (cmds @ count @ block @ [ "STREAMS" ])
       (List.map streams ~f:fst)
       (List.map streams ~f:(fun (_, id) ->
          Option.value_map id ~default:">" ~f:Stream_id.to_string))
       (Response.create parse_keyed_stream_response)
+  ;;
+
+  let xread t ?count ?block streams =
+    let cmds = [ "XREAD" ] in
+    read_command
+      t
+      ?count
+      ?block
+      ~cmds
+      (List.map streams ~f:(Tuple2.map_snd ~f:Option.some))
+  ;;
+
+  let xreadgroup t group consumer ?count ?block streams =
+    let cmds =
+      [ "XREADGROUP"; "GROUP"; Group.to_string group; Consumer.to_string consumer ]
+    in
+    read_command t ?count ?block ~cmds streams
   ;;
 
   let xclaim_command t ?idle key group consumer ~min_idle_time streams ~trailing ~response

@@ -964,6 +964,15 @@ let%expect_test "Streams" =
     let%bind response = R.xlen r "stream" in
     print_s ([%sexp_of: int] response);
     [%expect {| 5 |}];
+    let%bind response = R.xread r ~count:2 [ "stream", Redis.Stream_id.zero ] in
+    print_s
+      ([%sexp_of: (string * (Test_stream_id.t * (string * string) list) list) list]
+         response);
+    [%expect
+      {|
+      ((stream
+        (("<stream id>" ((message apple))) ("<stream id>" ((message orange))))))
+      |}];
     let%bind response = R.xgroup_create r "stream" group ~mkstream:() () in
     print_s ([%sexp_of: [ `Ok | `Already_exists ]] response);
     [%expect {| Already_exists |}];

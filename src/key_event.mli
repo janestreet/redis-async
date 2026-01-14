@@ -20,5 +20,6 @@ type t =
     (** Every time set, setex, setnx, or getset is called, a set event is generated. *)
   | `hset (** Every time hset, hsetnx, or hmset is called, an hset event is generated. *)
   | `incrby (** incr, decr, incrby, decrby *)
+  | `xadd (** xadd *)
   ]
 [@@deriving sexp_of, enumerate, string]
