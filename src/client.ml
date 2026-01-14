@@ -391,10 +391,12 @@ struct
          - When using BCAST the invalidation array can be larger than size 1, which is not
            documented in the protocol.
          - The invalidation messages are decoupled from the atomicity guarantees inside
-           Redis, {{: https://github.com/redis/redis/issues/7563 } which arguably should not
-           be the case}. For example: If I invalidate 3 keys using MSET the client should
-           ideally receive 1 invalidation message with 3 keys, but instead receives 3
-           invalidation message each with one key. *)
+           Redis,
+           {{:https://github.com/redis/redis/issues/7563} which arguably should not be the
+             case}.
+           For example: If I invalidate 3 keys using MSET the client should ideally
+           receive 1 invalidation message with 3 keys, but instead receives 3 invalidation
+           message each with one key. *)
       (match Resp3.peek_char buf with
        | '*' ->
          let keys = Key_parser.list buf |> Or_error.ok_exn in
@@ -538,7 +540,8 @@ struct
     (* Tell the session that we will be speaking RESP3 and authenticate if need be *)
     let cmds =
       [ "HELLO"; "3" ]
-      (* When protover (i.e. 2/3) is used, we can also pass [AUTH] and [SETNAME] to [HELLO]. *)
+      (* When protover (i.e. 2/3) is used, we can also pass [AUTH] and [SETNAME] to
+         [HELLO]. *)
       @ Option.value_map auth ~default:[] ~f:(fun { Auth.username; password } ->
         [ "AUTH"; username; password ])
     in
@@ -577,13 +580,13 @@ struct
      Read more here:
      https://redis.io/docs/reference/sentinel-clients/#redis-service-discovery-via-sentinel
 
-     If all sentinels fail to connect or return a leader, then the client should return
-     an error. The leader node will disconnect from the client on failover, so the
-     client does not need to poll or listen to a subscription event to determine when to
+     If all sentinels fail to connect or return a leader, then the client should return an
+     error. The leader node will disconnect from the client on failover, so the client
+     does not need to poll or listen to a subscription event to determine when to
      disconnect from a stale leader.
 
-     The same is true for replicas: once we get a replica, we need to connect to
-     it to confirm that it is indeed a replica.
+     The same is true for replicas: once we get a replica, we need to connect to it to
+     confirm that it is indeed a replica.
   *)
 
   let sentinel_connect_to_one_replica
@@ -662,9 +665,9 @@ struct
     | None ->
       let bus =
         Bus.create_exn
-          Arity1
           ~on_subscription_after_first_write:Allow
           ~on_callback_raise:Error.raise
+          ()
       in
       t.invalidations <- Some (bus, bcast);
       let commands =
@@ -696,10 +699,10 @@ struct
     don't_wait_for
     @@
     let%bind () = Pipe.closed writer in
-    (* We know for a fact that [Hashtbl.find lookup channel] exists and has
-       this entry because the only way that entry would be removed is if the
-       list is empty, and that list is only empty if all subscribers have been
-       removed. The only code that removes this subscriber is the one below.
+    (* We know for a fact that [Hashtbl.find lookup channel] exists and has this entry
+       because the only way that entry would be removed is if the list is empty, and that
+       list is only empty if all subscribers have been removed. The only code that removes
+       this subscriber is the one below.
     *)
     let remaining_subscribers =
       Hashtbl.update_and_return lookup channel ~f:(function
@@ -749,8 +752,8 @@ struct
       List.filter channels ~f:(fun channel ->
         match Hashtbl.find_multi lookup channel with
         | _ :: _ ->
-          (* If the list is ever empty, then we know for a fact that an unsubscribe
-             has been issued or we have never subscribed, so we have to resubscribe. *)
+          (* If the list is ever empty, then we know for a fact that an unsubscribe has
+             been issued or we have never subscribed, so we have to resubscribe. *)
           add_subscriber t lookup subscriber ~unsubscribe_command ~channel;
           false
         | [] -> true)
@@ -779,7 +782,8 @@ struct
           |> List.fold ~init:Deferred.Or_error.ok_unit ~f:(fun acc (_channel, r) ->
             match%bind.Deferred acc with
             | Error error ->
-              (* If there was an error, dequeue the next subscription request, as there will never be a response. *)
+              (* If there was an error, dequeue the next subscription request, as there
+                 will never be a response. *)
               ignore (Queue.dequeue_exn t.pending_response : (module Response_intf.S));
               Deferred.Or_error.fail error
             | Ok () ->

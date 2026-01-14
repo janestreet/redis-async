@@ -8,5 +8,6 @@ type t =
   | `set
   | `hset
   | `incrby
+  | `xadd
   ]
 [@@deriving sexp_of, enumerate, string ~capitalize:"snake_case"]
