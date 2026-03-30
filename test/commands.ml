@@ -383,7 +383,7 @@ let%expect_test "sorted set commands" =
     [%expect {| (String hello) |}];
     let%bind response = R.version r in
     print_endline response;
-    [%expect {| 7.4.1 |}];
+    [%expect {| 7.2.4 |}];
     return ())
 ;;
 
@@ -544,31 +544,31 @@ let%expect_test "Bin_prot" =
   return ()
 ;;
 
+let expect_invalidation invalidation_pipe =
+  let%map result = Pipe.read invalidation_pipe |> Deferred.ok in
+  print_s ([%sexp_of: [ `Ok of [ `All | `Key of string ] | `Eof ]] result)
+;;
+
 let%expect_test "Invalidation" =
   let%bind where_to_connect, _ = Sandbox.where_to_connect () in
   let%bind reader = R.create ~where_to_connect () in
   let%bind writer = R.create ~where_to_connect () in
-  let invalidations = Queue.create () in
-  let%bind bus = R.start_client_tracking reader () in
-  let subscriber = Bus.subscribe_exn bus ~f:(Queue.enqueue invalidations) in
-  let expect_invalidation () =
-    let result = Queue.dequeue_exn invalidations in
-    print_s ([%sexp_of: [ `All | `Key of string ]] result)
+  let%bind invalidation_pipe =
+    R.start_client_tracking reader () >>| Async_bus.pipe1_exn
   in
   let%bind response = R.get reader "hello" in
   print_s ([%sexp_of: string option] response);
   [%expect {| () |}];
   let%bind () = R.set writer "hello" "world" in
-  expect_invalidation ();
-  [%expect {| (Key hello) |}];
+  let%bind () = expect_invalidation invalidation_pipe in
+  [%expect {| (Ok (Key hello)) |}];
   let%bind () = R.flushall writer in
-  expect_invalidation ();
-  [%expect {| All |}];
+  let%bind () = expect_invalidation invalidation_pipe in
+  [%expect {| (Ok All) |}];
   let%bind () = R.flushdb reader in
-  expect_invalidation ();
-  [%expect {| All |}];
-  Bus.unsubscribe bus subscriber;
-  let%bind () = R.stop_client_tracking reader () in
+  let%bind () = expect_invalidation invalidation_pipe in
+  [%expect {| (Ok All) |}];
+  Pipe.close_read invalidation_pipe;
   return ()
 ;;
 
@@ -576,22 +576,17 @@ let%expect_test "Broadcast invalidation" =
   let%bind where_to_connect, _ = Sandbox.where_to_connect () in
   let%bind reader = R.create ~where_to_connect () in
   let%bind writer = R.create ~where_to_connect () in
-  let invalidations = Queue.create () in
-  let%bind bus = R.start_client_tracking reader ~bcast:true () in
-  let subscriber = Bus.subscribe_exn bus ~f:(Queue.enqueue invalidations) in
-  let expect_invalidation () =
-    let result = Queue.dequeue_exn invalidations in
-    print_s ([%sexp_of: [ `All | `Key of string ]] result)
+  let%bind invalidation_pipe =
+    R.start_client_tracking ~bcast:true reader () >>| Async_bus.pipe1_exn
   in
   let%bind () = R.set writer "hello" "world" in
   (* Reader receives bcast invalidation without first requesting any keys *)
-  expect_invalidation ();
-  [%expect {| (Key hello) |}];
+  let%bind () = expect_invalidation invalidation_pipe in
+  [%expect {| (Ok (Key hello)) |}];
   let%bind () = R.flushall writer in
-  expect_invalidation ();
-  [%expect {| All |}];
-  Bus.unsubscribe bus subscriber;
-  let%bind () = R.stop_client_tracking reader () in
+  let%bind () = expect_invalidation invalidation_pipe in
+  [%expect {| (Ok All) |}];
+  Pipe.close_read invalidation_pipe;
   return ()
 ;;
 
@@ -1068,6 +1063,27 @@ let%expect_test "Streams" =
       {|
       (("<stream id>" ((message foo))) ("<stream id>" ((message bar)))
        ("<stream id>" ((message fizz))))
+      |}];
+    let%bind trimmed = R.xtrim r "trim_stream" (`Max_length 1) in
+    print_s ([%sexp_of: int] trimmed);
+    [%expect {| 2 |}];
+    let%bind response = R.xrange r "trim_stream" () in
+    print_s ([%sexp_of: (Test_stream_id.t * (string * string) list) list] response);
+    [%expect {| (("<stream id>" ((message fizz)))) |}];
+    let%bind _ = R.xadd r "minid_stream" [ "message", "old1" ] in
+    let%bind _ = R.xadd r "minid_stream" [ "message", "old2" ] in
+    let%bind middle_id = R.xadd r "minid_stream" [ "message", "keep_from_here" ] in
+    let%bind _ = R.xadd r "minid_stream" [ "message", "new1" ] in
+    let%bind _ = R.xadd r "minid_stream" [ "message", "new2" ] in
+    let%bind trimmed = R.xtrim r "minid_stream" (`Min_stream_id middle_id) in
+    print_s ([%sexp_of: int] trimmed);
+    [%expect {| 2 |}];
+    let%bind response = R.xrange r "minid_stream" () in
+    print_s ([%sexp_of: (Test_stream_id.t * (string * string) list) list] response);
+    [%expect
+      {|
+      (("<stream id>" ((message keep_from_here))) ("<stream id>" ((message new1)))
+       ("<stream id>" ((message new2))))
       |}];
     return ())
 ;;
