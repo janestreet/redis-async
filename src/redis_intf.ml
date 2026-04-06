@@ -152,6 +152,13 @@ module type S = sig
     -> Value.t
     -> [ `Set | `Not_set ] Deferred.Or_error.t
 
+  val copy
+    :  ?replace:unit
+    -> [< `Leader ] t
+    -> Key.t
+    -> destination:Key.t
+    -> [ `Copied | `Not_copied ] Deferred.Or_error.t
+
   val mset : [< `Leader ] t -> (Key.t * Value.t) list -> unit Deferred.Or_error.t
   val msetnx : [< `Leader ] t -> (Key.t * Value.t) list -> bool Deferred.Or_error.t
   val get : [< `Leader | `Replica ] t -> Key.t -> Value.t option Deferred.Or_error.t
@@ -405,6 +412,14 @@ module type S = sig
     -> (Field.t * Value.t) list
     -> Stream_id.t Deferred.Or_error.t
 
+  val xtrim
+    :  [< `Leader ] t
+    -> Key.t
+    -> ?limit:int
+    -> ?approximate:bool
+    -> [< `Min_stream_id of Stream_id.t | `Max_length of int ]
+    -> int Deferred.Or_error.t
+
   val xgroup_create
     :  [< `Leader ] t
     -> Key.t
@@ -440,7 +455,7 @@ module type S = sig
     -> (Key.t * (Stream_id.t * (Field.t * Value.t) list) list) list Deferred.Or_error.t
 
   val xreadgroup
-    :  [< `Leader | `Replica ] t
+    :  [< `Leader ] t
     -> Group.t
     -> Consumer.t
     -> ?count:int

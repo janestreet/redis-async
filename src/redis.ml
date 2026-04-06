@@ -75,6 +75,25 @@ struct
     command_key t [ "RENAME" ] [ k; new_key ] (Response.create_ok ())
   ;;
 
+  let copy ?replace t k ~destination =
+    let args =
+      match replace with
+      | None -> []
+      | Some () -> [ "REPLACE" ]
+    in
+    match%map
+      command_keys_string_args
+        t
+        [ "COPY" ]
+        [ k; destination ]
+        args
+        (Response.create_int ())
+    with
+    | 1 -> `Copied
+    | 0 -> `Not_copied
+    | n -> raise_s [%message [%here] "Unexpected response" (n : int)]
+  ;;
+
   let scan t ~cursor ?count ?pattern () =
     let count =
       match count with
@@ -685,6 +704,20 @@ struct
         (Response.create_string ())
     in
     Stream_id.of_string response
+  ;;
+
+  let xtrim t key ?limit ?(approximate = false) threshold =
+    let args =
+      let marker = if approximate then "~" else "=" in
+      (match threshold with
+       | `Min_stream_id stream_id -> [ "MINID"; marker; Stream_id.to_string stream_id ]
+       | `Max_length threshold -> [ "MAXLEN"; marker; itoa threshold ])
+      @
+      match limit with
+      | None -> []
+      | Some limit -> [ "LIMIT"; itoa limit ]
+    in
+    command_keys_fields_and_values t [ "XTRIM" ] [ key ] args [] (Response.create_int ())
   ;;
 
   let xgroup_create t key group ?stream_id ?mkstream () =
