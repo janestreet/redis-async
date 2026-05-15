@@ -66,7 +66,7 @@ let create ~args ~connected directory =
     Deferred.ignore_m
       (let%bind redis = Redis_string.create ~where_to_connect () in
        let%bind () = Redis_string.shutdown redis in
-       Process.run_expect_no_output ~prog:"rm" ~args:[ "-rf"; directory ] ()));
+       Process.run_expect_no_stdout ~prog:"rm" ~args:[ "-rf"; directory ] ()));
   where_to_connect
 ;;
 
