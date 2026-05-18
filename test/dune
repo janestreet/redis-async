@@ -1,7 +1,8 @@
 (library
  (name redis_test)
  (libraries async async_extra.async_bus async_unix available_ephemeral_port
-   build_data core_kernel.bus core expect_test_helpers_core core_kernel.iobuf
-   redis redis_helpers core_kernel.weak_pointer)
+   core_kernel.bus core expect_test_helpers_core core_kernel.iobuf redis
+   redis_helpers core_kernel.weak_pointer)
  (preprocess
-  (pps ppx_jane)))
+  (pps ppx_jane ppx_nix))
+ (preprocessor_deps %{workspace_root}/sysdeps/nix/valkey_9_0.sysdep.sexp))
