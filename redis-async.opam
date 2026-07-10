@@ -20,6 +20,9 @@ depends: [
   "dune"        {>= "3.17.0"}
 ]
 available: arch != "x86_32"
+conflicts: [
+  "oxcaml-compiler" {< "5.2.0minus39"}
+]
 synopsis: "Redis client for Async applications"
 description: "
 A client library for Redis versions 6 and higher.
